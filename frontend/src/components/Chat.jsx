@@ -34,7 +34,7 @@ const Chat = ({ onAIResponse, educationType = 'arabic' }) => {
 
     try {
       // استدعاء الـ API
-      const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3000";
+      const API_URL = process.env.REACT_APP_API_URL || "https://saboora-ai.up.railway.app";
       const response = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: {
