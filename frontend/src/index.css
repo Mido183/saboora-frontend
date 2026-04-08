@@ -12,7 +12,7 @@
    ==================================================== */
 :root {
   --color-bg: #242424;
-  --color-primary: #2563eb;
+  --color-primary: #000000;
   /* اللون الرئيسي - الأزرق */
   --color-secondary: #7c3aed;
   /* اللون الثانوي - البنفسجي */
@@ -59,7 +59,7 @@ body {
 
 .whiteboard-header {
   /* لتغيير لون شريط العنوان: غير اللون هنا */
-  background: linear-gradient(135deg, #78350f, #92400e);
+  background: linear-gradient(135deg, #6b3313, #92400e);
   /* مثال: linear-gradient(135deg, #1e3a5f, #2563eb) للأزرق */
 }
 

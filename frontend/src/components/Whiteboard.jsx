@@ -94,7 +94,7 @@ const parseActions = (whiteboardContent) => {
 };
 
 // مكوّن منطقة الرسم اليدوي (كانفاس)
-const DrawingCanvas = ({ isActive }) => {
+const DrawingCanvas = ({ isActive, color = '#1d4ed8' }) => {
   const canvasRef = useRef(null);
   const drawing = useRef(false);
 
@@ -117,7 +117,7 @@ const DrawingCanvas = ({ isActive }) => {
       drawing.current = true;
       const { x, y } = getPos(e);
       ctx.beginPath(); ctx.moveTo(x, y);
-      ctx.strokeStyle = '#1d4ed8';
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2.5; ctx.lineCap = 'round';
     };
     const move = (e) => {
@@ -146,7 +146,7 @@ const DrawingCanvas = ({ isActive }) => {
       canvas.removeEventListener('touchmove', move);
       canvas.removeEventListener('touchend', stop);
     };
-  }, [isActive]);
+  }, [isActive, color]);
 
   return (
     <canvas
@@ -276,7 +276,7 @@ const Whiteboard = ({ aiContent, isWriting, educationType = 'arabic' }) => {
         }} />
 
         {/* كانفاس الرسم اليدوي */}
-        <DrawingCanvas isActive={drawMode} />
+        <DrawingCanvas isActive={drawMode} color={markerColor} />
 
         {/* محتوى الـ AI (HTML مع دعم RTL) */}
         <div style={{
