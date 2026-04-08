@@ -20,7 +20,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'],
+  origin: ['http://localhost:3000', 'http://localhost:5173', process.env.FRONTEND_URL],
   credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));
@@ -89,9 +89,8 @@ async function callGeminiAPI(userMessage, educationType = 'arabic') {
     const systemPrompt = createSystemPrompt(educationType);
     const fullPrompt = `${systemPrompt}\n\nالسؤال: ${userMessage}`;
     
-    // Using gemini-1.5-flash-latest for better compatibility
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -302,17 +301,15 @@ const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
-  // للتطوير: السماح بالطلبات بدون token أو بكلمة null
-  if (!token || token === 'null' || token === 'undefined') {
+  // للتطوير: السماح بالطلبات بدون token
+  if (!token) {
     req.user = { id: 'test-user', email: 'test@test.com' };
     return next();
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      // للسماح بالتجربة حتى لو التوكن قديم
-      req.user = { id: 'test-user', email: 'test@test.com' };
-      return next();
+      return res.status(403).json({ error: 'Invalid token' });
     }
     req.user = user;
     next();
@@ -461,6 +458,7 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
   try {
     console.log('\n📨 New Chat Request');
     console.log('User:', req.user?.email || 'test user');
+    console.log('Message:', req.body.message?.substring(0, 100) + '...');
     
     const { message, educationType = 'arabic' } = req.body;
 
@@ -475,6 +473,8 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
     const { chatResponse, whiteboardContent } = parseAIResponse(aiFullResponse);
 
     console.log('✅ Response ready!');
+    console.log('Chat length:', chatResponse.length);
+    console.log('Whiteboard length:', whiteboardContent.length);
 
     res.json({
       success: true,

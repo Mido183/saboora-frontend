@@ -8,12 +8,13 @@ function App() {
   const [isWriting, setIsWriting] = useState(false);
 
   const handleAIResponse = (content) => {
+    if (!content) return;
     setAiContent(content);
     setIsWriting(true);
     // Simulate writing duration based on content length
     setTimeout(() => {
       setIsWriting(false);
-    }, Math.min(content.length * 50, 5000));
+    }, Math.min((content?.length || 0) * 50, 5000));
   };
 
   return (

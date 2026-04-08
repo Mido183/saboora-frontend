@@ -27,6 +27,8 @@ const Chat = ({ onAIResponse, educationType = 'arabic' }) => {
       timestamp: new Date().toISOString()
     };
 
+    const currentInput = inputValue;
+    const currentFile = selectedFile;
     setMessages(prev => [...prev, userMessage]);
     setInputValue('');
     setSelectedFile(null);
@@ -34,7 +36,7 @@ const Chat = ({ onAIResponse, educationType = 'arabic' }) => {
 
     try {
       // استدعاء الـ API
-      const API_URL = process.env.REACT_APP_API_URL || "https://saboora-ai.up.railway.app";
+      const API_URL = "http://localhost:3000";
       const response = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: {
@@ -42,8 +44,8 @@ const Chat = ({ onAIResponse, educationType = 'arabic' }) => {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
         body: JSON.stringify({
-          message: inputValue,
-          file: selectedFile,
+          message: currentInput,
+          file: currentFile,
           educationType: educationType,
           conversationHistory: messages
         })
