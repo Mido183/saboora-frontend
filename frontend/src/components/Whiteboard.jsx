@@ -35,6 +35,68 @@ const Whiteboard = ({ aiContent, isWriting, educationType = 'arabic' }) => {
   const [isAnimating, setIsAnimating] = useState(false);
   const canvasRef = useRef(null);
   const drawingQueue = useRef([]);
+  const [isDrawingManual, setIsDrawingManual] = useState(false);
+
+  // إعداد الكانفاس والمستمعين للرسم اليدوي
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const startDrawing = (e) => {
+      setIsDrawingManual(true);
+      const { offsetX, offsetY } = getCoordinates(e);
+      ctx.beginPath();
+      ctx.moveTo(offsetX, offsetY);
+      ctx.strokeStyle = MARKER_COLORS.blue; // اللون الافتراضي للرسم اليدوي
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+    };
+
+    const draw = (e) => {
+      if (!isDrawingManual) return;
+      const { offsetX, offsetY } = getCoordinates(e);
+      ctx.lineTo(offsetX, offsetY);
+      ctx.stroke();
+      if (Math.random() > 0.8) playPenSound();
+    };
+
+    const stopDrawing = () => {
+      setIsDrawingManual(false);
+      ctx.closePath();
+    };
+
+    const getCoordinates = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      // دعم اللمس والماوس
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      
+      return {
+        offsetX: (clientX - rect.left) * scaleX,
+        offsetY: (clientY - rect.top) * scaleY
+      };
+    };
+
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('touchstart', startDrawing);
+    canvas.addEventListener('touchmove', draw);
+    canvas.addEventListener('touchend', stopDrawing);
+
+    return () => {
+      canvas.removeEventListener('mousedown', startDrawing);
+      canvas.removeEventListener('mousemove', draw);
+      canvas.removeEventListener('mouseup', stopDrawing);
+      canvas.removeEventListener('touchstart', startDrawing);
+      canvas.removeEventListener('touchmove', draw);
+      canvas.removeEventListener('touchend', stopDrawing);
+    };
+  }, [isDrawingManual]);
 
   // تأثير اهتزاز بسيط (Jitter) للرسم اليدوي
   const getJitter = (amount = 1.5) => (Math.random() - 0.5) * amount;

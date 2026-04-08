@@ -46,7 +46,11 @@ const Chat = ({ onAIResponse, educationType = 'arabic', gradeLevel = 'sec3', stu
     setIsLoading(true);
 
     try {
-      const API_URL = "http://localhost:3000";
+      // محاولة الوصول للسيرفر (محلي أو أونلاين)
+      const API_URL = window.location.hostname === 'localhost' 
+        ? "http://localhost:3000" 
+        : ""; // المسار النسبي إذا كان الـ frontend والـ backend على نفس الدومين
+
       const response = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: {
@@ -55,12 +59,17 @@ const Chat = ({ onAIResponse, educationType = 'arabic', gradeLevel = 'sec3', stu
         },
         body: JSON.stringify({
           message: currentInput,
-          file: currentFile, // يحتوي على Base64 إذا كان صورة
+          file: currentFile, 
           educationType,
           gradeLevel,
-          conversationHistory: messages.map(m => ({ role: m.role, content: m.content }))
+          conversationHistory: messages.slice(-5).map(m => ({ role: m.role, content: m.content }))
         })
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Server Error: ${response.status}`);
+      }
 
       const data = await response.json();
       
