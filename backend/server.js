@@ -15,12 +15,12 @@ const app = express();
 // Configuration
 // ============================================
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'],
+  origin: '*', // للسماح بكل الاتصالات أثناء التطوير
   credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));

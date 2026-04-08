@@ -1,321 +1,357 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// ألوان الماركر الواقعية
-const MARKER_COLORS = {
+// ألوان الطباشير
+const COLORS = {
   black: '#1a1a1a',
-  blue: '#2563eb',
+  blue: '#1d4ed8',
   red: '#dc2626',
-  green: '#16a34a',
-  purple: '#9333ea',
+  green: '#15803d',
+  purple: '#7c3aed',
+  orange: '#ea580c',
 };
 
-// أصوات القلم (Pen Clicks)
-const playPenSound = () => {
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  const oscillator = audioContext.createOscillator();
-  const gainNode = audioContext.createGain();
+// صوت القلم البسيط
+const playClick = () => {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = 900 + Math.random() * 200;
+    g.gain.setValueAtTime(0.04, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(); o.stop(ctx.currentTime + 0.06);
+  } catch (_) {}
+};
 
-  oscillator.type = 'sine';
-  oscillator.frequency.setValueAtTime(800 + Math.random() * 200, audioContext.currentTime);
+// مكوّن سطر واحد يظهر بتسلسل حرف بحرف
+const AnimatedLine = ({ text, color = COLORS.black, size = 'normal', delay = 0, onDone }) => {
+  const [displayed, setDisplayed] = useState('');
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    let i = 0;
+    const timer = setTimeout(() => {
+      const interval = setInterval(() => {
+        i++;
+        setDisplayed(text.slice(0, i));
+        if (i % 3 === 0) playClick();
+        if (i >= text.length) {
+          clearInterval(interval);
+          setDone(true);
+          if (onDone) onDone();
+        }
+      }, 28 + Math.random() * 20);
+      return () => clearInterval(interval);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [text, delay]);
+
+  const fontSize = size === 'title' ? '26px' : size === 'formula' ? '22px' : '17px';
+  const fontWeight = size === 'title' ? '900' : size === 'formula' ? '700' : '500';
+
+  return (
+    <div style={{
+      color,
+      fontSize,
+      fontWeight,
+      fontFamily: "'Cairo', 'Amiri', sans-serif",
+      lineHeight: '1.9',
+      minHeight: '1.9em',
+      direction: 'rtl',
+      textAlign: 'right',
+      letterSpacing: size === 'formula' ? '1px' : '0',
+      borderBottom: size === 'title' ? '2px solid ' + color + '33' : 'none',
+      paddingBottom: size === 'title' ? '4px' : '0',
+      marginBottom: size === 'title' ? '8px' : '2px',
+    }}>
+      {displayed}
+      {!done && <span style={{ opacity: Math.random() > 0.5 ? 1 : 0, color, marginRight: '2px' }}>|</span>}
+    </div>
+  );
+};
+
+// تفسير قائمة أوامر السبورة
+const parseActions = (whiteboardContent) => {
+  if (!whiteboardContent) return [];
   
-  gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.05);
+  try {
+    const parsed = JSON.parse(whiteboardContent);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
 
-  oscillator.connect(gainNode);
-  gainNode.connect(audioContext.destination);
-
-  oscillator.start();
-  oscillator.stop(audioContext.currentTime + 0.05);
+  // Fallback: تحويل النص العادي لأوامر WRITE
+  const lines = whiteboardContent.split('\n').filter(l => l.trim());
+  return lines.map(line => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('##')) return { type: 'WRITE', content: trimmed.replace(/^#+\s*/, ''), color: 'blue', size: 'title' };
+    if (/[=×÷+\-^]/.test(trimmed) || trimmed.includes('F =') || trimmed.includes('القانون')) return { type: 'WRITE', content: trimmed, color: 'red', size: 'formula' };
+    if (trimmed.startsWith('ملاحظة') || trimmed.startsWith('Note')) return { type: 'WRITE', content: trimmed, color: 'green', size: 'normal' };
+    return { type: 'WRITE', content: trimmed, color: 'black', size: 'normal' };
+  });
 };
 
-const Whiteboard = ({ aiContent, isWriting, educationType = 'arabic' }) => {
-  const [slides, setSlides] = useState([[]]);
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const [isAnimating, setIsAnimating] = useState(false);
+// مكوّن منطقة الرسم اليدوي (كانفاس)
+const DrawingCanvas = ({ isActive }) => {
   const canvasRef = useRef(null);
-  const drawingQueue = useRef([]);
-  const [isDrawingManual, setIsDrawingManual] = useState(false);
+  const drawing = useRef(false);
 
-  // إعداد الكانفاس والمستمعين للرسم اليدوي
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
-    const startDrawing = (e) => {
-      setIsDrawingManual(true);
-      const { offsetX, offsetY } = getCoordinates(e);
-      ctx.beginPath();
-      ctx.moveTo(offsetX, offsetY);
-      ctx.strokeStyle = MARKER_COLORS.blue; // اللون الافتراضي للرسم اليدوي
-      ctx.lineWidth = 3;
-      ctx.lineCap = 'round';
-    };
-
-    const draw = (e) => {
-      if (!isDrawingManual) return;
-      const { offsetX, offsetY } = getCoordinates(e);
-      ctx.lineTo(offsetX, offsetY);
-      ctx.stroke();
-      if (Math.random() > 0.8) playPenSound();
-    };
-
-    const stopDrawing = () => {
-      setIsDrawingManual(false);
-      ctx.closePath();
-    };
-
-    const getCoordinates = (e) => {
+    const getPos = (e) => {
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
       const scaleY = canvas.height / rect.height;
-      
-      // دعم اللمس والماوس
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-      
-      return {
-        offsetX: (clientX - rect.left) * scaleX,
-        offsetY: (clientY - rect.top) * scaleY
-      };
+      const src = e.touches ? e.touches[0] : e;
+      return { x: (src.clientX - rect.left) * scaleX, y: (src.clientY - rect.top) * scaleY };
     };
 
-    canvas.addEventListener('mousedown', startDrawing);
-    canvas.addEventListener('mousemove', draw);
-    canvas.addEventListener('mouseup', stopDrawing);
-    canvas.addEventListener('touchstart', startDrawing);
-    canvas.addEventListener('touchmove', draw);
-    canvas.addEventListener('touchend', stopDrawing);
+    const start = (e) => {
+      if (!isActive) return;
+      e.preventDefault();
+      drawing.current = true;
+      const { x, y } = getPos(e);
+      ctx.beginPath(); ctx.moveTo(x, y);
+      ctx.strokeStyle = '#1d4ed8';
+      ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    };
+    const move = (e) => {
+      if (!drawing.current || !isActive) return;
+      e.preventDefault();
+      const { x, y } = getPos(e);
+      ctx.lineTo(x, y); ctx.stroke();
+      if (Math.random() > 0.85) playClick();
+    };
+    const stop = () => { drawing.current = false; ctx.closePath(); };
+
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', move);
+    canvas.addEventListener('mouseup', stop);
+    canvas.addEventListener('mouseleave', stop);
+    canvas.addEventListener('touchstart', start, { passive: false });
+    canvas.addEventListener('touchmove', move, { passive: false });
+    canvas.addEventListener('touchend', stop);
 
     return () => {
-      canvas.removeEventListener('mousedown', startDrawing);
-      canvas.removeEventListener('mousemove', draw);
-      canvas.removeEventListener('mouseup', stopDrawing);
-      canvas.removeEventListener('touchstart', startDrawing);
-      canvas.removeEventListener('touchmove', draw);
-      canvas.removeEventListener('touchend', stopDrawing);
+      canvas.removeEventListener('mousedown', start);
+      canvas.removeEventListener('mousemove', move);
+      canvas.removeEventListener('mouseup', stop);
+      canvas.removeEventListener('mouseleave', stop);
+      canvas.removeEventListener('touchstart', start);
+      canvas.removeEventListener('touchmove', move);
+      canvas.removeEventListener('touchend', stop);
     };
-  }, [isDrawingManual]);
-
-  // تأثير اهتزاز بسيط (Jitter) للرسم اليدوي
-  const getJitter = (amount = 1.5) => (Math.random() - 0.5) * amount;
-
-  // دالة محاكاة الكتابة البشرية (Handwriting Animation)
-  const drawTextHandwritten = async (ctx, text, x, y, color = MARKER_COLORS.black, fontSize = 28) => {
-    ctx.font = `${fontSize}px "Gochi Hand", "Cairo", cursive`;
-    ctx.fillStyle = color;
-    
-    let currentX = x;
-    const chars = text.split('');
-    
-    for (const char of chars) {
-      const jitterX = getJitter(1);
-      const jitterY = getJitter(1);
-      ctx.fillText(char, currentX + jitterX, y + jitterY);
-      
-      const charWidth = ctx.measureText(char).width;
-      currentX += charWidth + 1;
-      
-      // صوت القلم
-      if (Math.random() > 0.6) playPenSound();
-      
-      // تأخير متغير لمحاكاة السرعة البشرية
-      await new Promise(r => setTimeout(r, 30 + Math.random() * 40));
-    }
-  };
-
-  // رسم أشكال مع اهتزاز (Jitter) لتبدو مرسومة باليد
-  const drawShapeHanddrawn = async (ctx, action) => {
-    ctx.strokeStyle = MARKER_COLORS[action.color] || MARKER_COLORS.blue;
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-
-    const { shape, x = 400, y = 300, size = 100, label } = action;
-
-    if (shape === 'circle') {
-      // رسم دائرة مهتزة تدريجياً
-      for (let i = 0; i <= Math.PI * 2; i += 0.1) {
-        const radius = size + getJitter(3);
-        const px = x + Math.cos(i) * radius;
-        const py = y + Math.sin(i) * radius;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-        ctx.stroke();
-        await new Promise(r => setTimeout(r, 10));
-      }
-    } else if (shape === 'line') {
-      const { x2, y2 } = action;
-      ctx.moveTo(x + getJitter(2), y + getJitter(2));
-      ctx.lineTo(x2 + getJitter(2), y2 + getJitter(2));
-      ctx.stroke();
-    }
-
-    if (label) {
-      await drawTextHandwritten(ctx, label, x - 20, y + size + 30, ctx.strokeStyle, 20);
-    }
-  };
-
-  // إضافة صورة (Sticker)
-  const drawSticker = (ctx, query, x, y, caption) => {
-    const img = new Image();
-    // استخدام مصدر صور تعليمي افتراضي أو Placeholder
-    img.src = `https://unavatar.io/duckduckgo/${encodeURIComponent(query)}`;
-    img.onload = () => {
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = "rgba(0,0,0,0.1)";
-      ctx.drawImage(img, x, y, 150, 150);
-      ctx.shadowBlur = 0;
-      if (caption) {
-        drawTextHandwritten(ctx, caption, x, y + 170, MARKER_COLORS.black, 16);
-      }
-    };
-  };
-
-  // معالجة قائمة الأوامر (Action Processor)
-  const processActions = async (actions) => {
-    if (!canvasRef.current || actions.length === 0) return;
-    setIsAnimating(true);
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    
-    let currentY = 80;
-    const margin = 50;
-
-    for (const action of actions) {
-      switch (action.type) {
-        case 'WRITE':
-          const fontSize = action.importance === 'high' ? 36 : 26;
-          const color = MARKER_COLORS[action.color] || MARKER_COLORS.black;
-          await drawTextHandwritten(ctx, action.content, margin, currentY, color, fontSize);
-          currentY += fontSize + 20;
-          break;
-        case 'DRAW':
-          await drawShapeHanddrawn(ctx, action);
-          break;
-        case 'STICKER':
-          drawSticker(ctx, action.query, 450, currentY, action.caption);
-          break;
-        case 'CLEAR':
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          currentY = 80;
-          break;
-        default:
-          break;
-      }
-      await new Promise(r => setTimeout(r, 500)); // فاصل بين الأوامر
-    }
-    setIsAnimating(false);
-  };
-
-  // استقبال المحتوى وتفسيره كـ JSON
-  useEffect(() => {
-    if (!aiContent || !isWriting) return;
-
-    try {
-      const actions = JSON.parse(aiContent);
-      if (Array.isArray(actions)) {
-        // إذا كان هناك محتوى جديد، نضيف شريحة جديدة
-        setSlides(prev => [...prev, actions]);
-        setCurrentSlideIndex(prev => prev + 1);
-        processActions(actions);
-      }
-    } catch (e) {
-      // Fallback للنص العادي إذا فشل الـ JSON
-      const fallbackActions = [{ type: 'WRITE', content: aiContent, color: 'black' }];
-      setSlides(prev => [...prev, fallbackActions]);
-      setCurrentSlideIndex(prev => prev + 1);
-      processActions(fallbackActions);
-    }
-  }, [aiContent, isWriting]);
-
-  // تبديل الشرائح
-  const goToSlide = (index) => {
-    if (index >= 0 && index < slides.length) {
-      setCurrentSlideIndex(index);
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      // إعادة رسم محتوى الشريحة المختارة (بدون أنيميشن طويل للسرعة)
-      const actions = slides[index];
-      if (actions) {
-        actions.forEach(a => {
-          if (a.type === 'WRITE') {
-            ctx.font = `${a.importance === 'high' ? 36 : 26}px "Gochi Hand", cursive`;
-            ctx.fillStyle = MARKER_COLORS[a.color] || MARKER_COLORS.black;
-            ctx.fillText(a.content, 50, 80 + index * 50); // تبسيط للإعادة
-          }
-        });
-      }
-    }
-  };
+  }, [isActive]);
 
   return (
-    <div className="relative w-full h-full flex flex-col bg-[#fffdf5] rounded-xl overflow-hidden shadow-2xl border-8 border-amber-900/10">
-      
-      {/* Header بنمط خشبي */}
-      <div className="h-14 bg-gradient-to-r from-amber-900 to-amber-800 flex items-center justify-between px-6 shadow-lg z-10">
-        <div className="flex items-center gap-3 text-white">
-          <span className={`text-2xl ${isAnimating ? 'animate-bounce' : ''}`}>✏️</span>
-          <h2 className="font-bold text-lg" style={{ fontFamily: 'Cairo' }}>
-            {educationType === 'arabic' ? 'السبورة التفاعلية' : 'Interactive Board'}
-          </h2>
-        </div>
-        
-        <div className="flex gap-4 items-center">
-           {slides.length > 1 && (
-             <div className="flex gap-2 bg-white/10 px-3 py-1 rounded-full">
-                <button onClick={() => goToSlide(currentSlideIndex - 1)} disabled={currentSlideIndex === 0}>◀</button>
-                <span className="text-white text-xs">{currentSlideIndex + 1} / {slides.length}</span>
-                <button onClick={() => goToSlide(currentSlideIndex + 1)} disabled={currentSlideIndex === slides.length - 1}>▶</button>
-             </div>
-           )}
-           <button 
-            className="p-2 hover:bg-white/20 rounded-full transition-colors text-white"
-            onClick={() => {
-              const ctx = canvasRef.current.getContext('2d');
-              ctx.clearRect(0, 0, 1200, 800);
-            }}
-           >
-             🗑️
-           </button>
-        </div>
-      </div>
+    <canvas
+      ref={canvasRef}
+      width={900} height={500}
+      style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        cursor: isActive ? 'crosshair' : 'default',
+        zIndex: isActive ? 10 : 0,
+        opacity: 1,
+      }}
+    />
+  );
+};
 
-      {/* منطقة الـ Canvas */}
-      <div className="flex-1 relative overflow-hidden bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:40px_40px]">
-        <canvas
-          ref={canvasRef}
-          width={1200}
-          height={800}
-          className="w-full h-full cursor-crosshair"
-          style={{ imageRendering: 'pixelated' }}
-        />
-        
-        {/* أنيميشن المسح (Wipe) */}
-        <AnimatePresence>
-          {isWriting && (
-            <motion.div 
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: 1 }}
-              exit={{ scaleX: 0 }}
-              className="absolute inset-0 bg-white/40 origin-left pointer-events-none backdrop-blur-[1px]"
-              transition={{ duration: 0.5 }}
+// المكوّن الرئيسي للسبورة
+const Whiteboard = ({ aiContent, isWriting, educationType = 'arabic' }) => {
+  const [slides, setSlides] = useState([[]]);
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [drawMode, setDrawMode] = useState(false);
+  const [markerColor, setMarkerColor] = useState('#1d4ed8');
+  const isArabic = educationType === 'arabic';
+
+  // استقبال محتوى جديد من الـ AI
+  useEffect(() => {
+    if (!aiContent || !isWriting) return;
+    const actions = parseActions(aiContent);
+    if (actions.length === 0) return;
+
+    setSlides(prev => {
+      const newSlides = [...prev, actions];
+      // الانتقال تلقائياً للشريحة الجديدة
+      setTimeout(() => setCurrentSlide(newSlides.length - 1), 100);
+      return newSlides;
+    });
+  }, [aiContent, isWriting]);
+
+  // عرض محتوى الشريحة الحالية
+  useEffect(() => {
+    if (slides[currentSlide]?.length > 0) setIsAnimating(true);
+    const t = setTimeout(() => setIsAnimating(false), 3000);
+    return () => clearTimeout(t);
+  }, [currentSlide]);
+
+  const currentActions = slides[currentSlide] || [];
+
+  return (
+    <div style={{
+      width: '100%', height: '100%',
+      display: 'flex', flexDirection: 'column',
+      background: '#fefce8',
+      borderRadius: '12px',
+      overflow: 'hidden',
+      boxShadow: 'inset 0 2px 20px rgba(0,0,0,0.08)',
+      fontFamily: "'Cairo', 'Tajawal', sans-serif",
+    }}>
+
+      {/* شريط الأدوات */}
+      <div style={{
+        height: '52px', minHeight: '52px',
+        background: 'linear-gradient(135deg, #78350f, #92400e)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 16px', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', zIndex: 5,
+      }}>
+        {/* أدوات اليسار */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '20px' }}>{isAnimating ? '✏️' : '🖊️'}</span>
+          <span style={{ color: 'white', fontWeight: '700', fontSize: '14px' }}>
+            {isArabic ? 'السبورة التفاعلية' : 'Interactive Board'}
+          </span>
+        </div>
+
+        {/* أزرار الشرائح */}
+        {slides.length > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.15)', borderRadius: '20px', padding: '4px 10px' }}>
+            <button onClick={() => setCurrentSlide(i => Math.max(0, i - 1))} disabled={currentSlide === 0}
+              style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', opacity: currentSlide === 0 ? 0.3 : 1 }}>◀</button>
+            <span style={{ color: 'white', fontSize: '12px', fontFamily: 'Cairo', minWidth: '50px', textAlign: 'center' }}>
+              {currentSlide + 1} / {slides.length}
+            </span>
+            <button onClick={() => setCurrentSlide(i => Math.min(slides.length - 1, i + 1))} disabled={currentSlide === slides.length - 1}
+              style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', opacity: currentSlide === slides.length - 1 ? 0.3 : 1 }}>▶</button>
+          </div>
+        )}
+
+        {/* أدوات اليمين */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {/* ألوان الماركر */}
+          {Object.entries({ blue: '#1d4ed8', red: '#dc2626', green: '#15803d', black: '#1a1a1a' }).map(([name, hex]) => (
+            <button key={name}
+              onClick={() => { setMarkerColor(hex); setDrawMode(true); }}
+              style={{
+                width: '20px', height: '20px', borderRadius: '50%', background: hex, border: markerColor === hex && drawMode ? '3px solid white' : '2px solid rgba(255,255,255,0.4)',
+                cursor: 'pointer', transition: 'transform 0.1s',
+              }}
             />
-          )}
-        </AnimatePresence>
+          ))}
+
+          {/* زر الرسم */}
+          <button onClick={() => setDrawMode(d => !d)}
+            style={{
+              background: drawMode ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.4)', color: 'white',
+              borderRadius: '8px', padding: '4px 10px', cursor: 'pointer', fontSize: '12px', fontFamily: 'Cairo',
+            }}>
+            {drawMode ? (isArabic ? '🖱️ ماوس' : '🖱️ Mouse') : (isArabic ? '✏️ ارسم' : '✏️ Draw')}
+          </button>
+
+          {/* مسح */}
+          <button onClick={() => setSlides(prev => { const updated = [...prev]; updated[currentSlide] = []; return updated; })}
+            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.4)', color: 'white', borderRadius: '8px', padding: '4px 10px', cursor: 'pointer', fontSize: '12px' }}>
+            🗑️
+          </button>
+        </div>
       </div>
 
-      {/* مؤشر الحالة */}
-      {isAnimating && (
-        <div className="absolute bottom-6 right-6 bg-white shadow-2xl rounded-2xl p-4 flex items-center gap-4 border border-blue-100 animate-pulse">
-           <div className="w-4 h-4 bg-blue-600 rounded-full" />
-           <span className="text-sm font-bold text-blue-900" style={{ fontFamily: 'Cairo' }}>
-             {educationType === 'arabic' ? 'الأستاذ يكتب الآن...' : 'Teacher is writing...'}
-           </span>
+      {/* منطقة الكتابة */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* الخطوط الأفقية */}
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 0,
+          backgroundImage: 'repeating-linear-gradient(transparent, transparent 39px, #d4c596 39px, #d4c596 40px)',
+          backgroundSize: '100% 40px',
+          backgroundPositionY: '20px',
+          opacity: 0.4,
+        }} />
+
+        {/* كانفاس الرسم اليدوي */}
+        <DrawingCanvas isActive={drawMode} />
+
+        {/* محتوى الـ AI (HTML مع دعم RTL) */}
+        <div style={{
+          position: 'relative', zIndex: drawMode ? 0 : 5,
+          padding: '24px 32px', height: '100%', overflowY: 'auto',
+          direction: 'rtl',
+        }}>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentSlide}
+              initial={{ opacity: 0, x: isArabic ? -20 : 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: isArabic ? 20 : -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              {currentActions.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', opacity: 0.4, paddingTop: '60px', gap: '16px' }}>
+                  <span style={{ fontSize: '60px' }}>📝</span>
+                  <p style={{ fontSize: '18px', color: '#78350f', fontFamily: 'Cairo', fontWeight: '600' }}>
+                    {isArabic ? 'السبورة تنتظر سؤالك...' : 'Waiting for your question...'}
+                  </p>
+                  <p style={{ fontSize: '13px', color: '#a16207', fontFamily: 'Cairo' }}>
+                    {isArabic ? 'يمكنك أيضاً الرسم مباشرة بالضغط على زر "ارسم"' : 'You can also draw directly by clicking "Draw"'}
+                  </p>
+                </div>
+              ) : (
+                currentActions.map((action, idx) => {
+                  if (action.type === 'WRITE' || !action.type) {
+                    return (
+                      <AnimatedLine
+                        key={`${currentSlide}-${idx}`}
+                        text={action.content || ''}
+                        color={COLORS[action.color] || COLORS.black}
+                        size={action.size || (action.importance === 'high' ? 'title' : 'normal')}
+                        delay={idx * 400}
+                      />
+                    );
+                  }
+                  if (action.type === 'DRAW') {
+                    return (
+                      <div key={`${currentSlide}-${idx}`} style={{ margin: '12px 0', padding: '8px', borderRadius: '8px', background: 'rgba(37,99,235,0.05)', border: '1px dashed #93c5fd', color: '#1d4ed8', fontSize: '13px', fontFamily: 'Cairo', direction: 'rtl' }}>
+                        🖊️ شكل: {action.shape} {action.label ? `- ${action.label}` : ''}
+                      </div>
+                    );
+                  }
+                  return null;
+                })
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
-      )}
+      </div>
+
+      {/* مؤشر الكتابة */}
+      <AnimatePresence>
+        {isWriting && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            style={{
+              position: 'absolute', bottom: '16px', right: '16px', zIndex: 20,
+              background: 'white', borderRadius: '16px', padding: '10px 18px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #bfdbfe',
+              display: 'flex', alignItems: 'center', gap: '10px',
+            }}>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {[0, 1, 2].map(i => (
+                <motion.div key={i} animate={{ scale: [1, 1.5, 1] }} transition={{ repeat: Infinity, delay: i * 0.2, duration: 0.8 }}
+                  style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#2563eb' }} />
+              ))}
+            </div>
+            <span style={{ fontSize: '13px', fontFamily: 'Cairo', fontWeight: '600', color: '#1e40af' }}>
+              {isArabic ? 'الأستاذ يكتب...' : 'Teacher is writing...'}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
