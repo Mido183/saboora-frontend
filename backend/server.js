@@ -82,44 +82,48 @@ async function callGroqAPI(userMessage, educationType = 'arabic', gradeLevel = '
 }
 
 // 2️⃣ Gemini API (Fallback #1)
-async function callGeminiAPI(userMessage, educationType = 'arabic', gradeLevel = 'sec3') {
-  console.log('🚀 Trying Gemini API...');
+async function callGeminiAPI(userMessage, educationType = 'arabic', gradeLevel = 'sec3', fileData = null) {
+  console.log('🚀 Trying Gemini API (with Multi-modal support)...');
   
   try {
     const systemPrompt = createSystemPrompt(educationType, gradeLevel);
-    const fullPrompt = `${systemPrompt}\n\nالسؤال: ${userMessage}`;
     
-    // Using gemini-1.5-flash-latest for better compatibility
+    // إعداد محتوى الرسالة
+    const parts = [{ text: `${systemPrompt}\n\nالسؤال: ${userMessage}` }];
+
+    // إذا كان هناك ملف (Base64)
+    if (fileData && fileData.data) {
+      console.log('📎 Adding file to Gemini request:', fileData.name);
+      const base64Content = fileData.data.split(',')[1];
+      parts.push({
+        inline_data: {
+          mime_type: fileData.type || "image/jpeg",
+          data: base64Content
+        }
+      });
+    }
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{
-            parts: [{ text: fullPrompt }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2000
-          }
+          contents: [{ role: 'user', parts }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 2500 }
         })
       }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('❌ Gemini API Error:', response.status, errorText);
-      throw new Error(`Gemini API failed: ${response.status}`);
+      throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
+    if (!data.candidates || !data.candidates[0]) throw new Error('Gemini: No response');
     
-    if (!data.candidates || !data.candidates[0]) {
-      throw new Error('Gemini: No response generated');
-    }
-    
-    console.log('✅ Gemini API Success!');
+    console.log('✅ Gemini API Content Received!');
     return data.candidates[0].content.parts[0].text;
 
   } catch (error) {
@@ -173,108 +177,60 @@ async function callBlackBoxAPI(userMessage, educationType = 'arabic', gradeLevel
 
 function createSystemPrompt(educationType, gradeLevel = 'sec3') {
   const isArabic = educationType === 'arabic';
-
   const gradeName = {
     sec3: 'الثانوية العامة', sec2: 'الثاني الثانوي', sec1: 'الأول الثانوي',
     prep3: 'الثالث الإعدادي', prep2: 'الثاني الإعدادي', prep1: 'الأول الإعدادي',
     primary6: 'السادس الابتدائي', primary5: 'الخامس الابتدائي', primary4: 'الرابع الابتدائي',
-    grade12: 'Grade 12 (A-Level/IGCSE)', grade11: 'Grade 11', grade10: 'Grade 10',
-    grade9: 'Grade 9', grade8: 'Grade 8', grade7: 'Grade 7',
-    grade6: 'Grade 6', grade5: 'Grade 5', grade4: 'Grade 4',
   }[gradeLevel] || gradeLevel;
 
-  if (isArabic) {
-    return `أنت "سبورة AI"، مدرس خاص محترف ومتخصص في الرياضيات والفيزياء والكيمياء للمنهج المصري.
+  return `You are "Saboora AI", a professional multi-modal tutor. 
+  Student Level: ${gradeName} - ${isArabic ? 'Arabic' : 'English'} Curriculum.
 
-📌 الطالب: صف ${gradeName} - تعليم عربي
-
-🎯 أسلوب التدريس (مهم جداً):
-- لا تقدّم كل المعلومات دفعة واحدة
-- مهّد للطالب أولاً بسؤال أو ربط بمعلومة يعرفها
-- اشرح جزءاً واحداً صغيراً في كل مرة
-- في نهاية كل رد، اسأل الطالب: "هل فهمت هذه الخطوة؟ أم تريد أشرح بطريقة تانية؟"
-- إذا قال الطالب "لم أفهم" أو "مش فاهم"، اشرح بمثال مختلف وبسيط جداً
-
-📋 تنسيق الرد الإلزامي (لا تخرج عن هذا التنسيق أبداً):
-يجب أن يحتوي ردك على جزأين منفصلين:
-
-الجزء الأول (شرح الشات):
-اشرح بالتفصيل في الشات بأسلوب عربي سهل ومفهوم.
-استخدم الأمثلة والخطوات الواضحة.
-الهدف: الطالب يفهم الشرح من النص.
-
----WHITEBOARD---
-الجزء الثاني (السبورة):
-هذا الجزء يُكتب على السبورة مثل مدرس حقيقي.
-- اكتب فقط النقاط الأساسية
-- استخدم تنسيق ## للعناوين الرئيسية
-- اكتب القانون بالعربي باللون الأزرق (ابدأ السطر بـ ##)
-- اكتب الإجابة النهائية بوضوح (ابدأ بـ ## الإجابة)
-- ملاحظات مهمة (ابدأ بـ ملاحظة:)
-- يجب أن يكون مختصراً ومختلفاً عن شرح الشات
-- وكأنك تكتب على سبورة حقيقية أمام الطالب
-- لا تكتب أكثر من 10-12 سطراً بالمجمل
-
-مثال على تنسيق السبورة:
-## قانون الحركة
-القوة = الكتلة × التسارع
-F = m × a
-
-## الخطوات
-1. نحدد المعطيات من المسألة
-2. نطبق القانون مباشرة
-3. نحسب القيمة المطلوبة
-
-## الإجابة
-القوة = 10 × 5 = 50 نيوتن
-
-ملاحظة: القوة دايماً في اتجاه التسارع`;
-  } else {
-    return `You are "Saboora AI", a professional private tutor specializing in Math, Physics, and Chemistry.
-
-📌 Student Level: ${gradeName} - English curriculum (Language School / International)
-
-🎯 Teaching Style (Very Important):
-- Do NOT dump all information at once
-- Start with a warm-up question or connect to prior knowledge
-- Explain one small concept at a time
-- End every response by asking: "Did you understand this step? Or would you like me to explain it differently?"
-- If student says "I don't understand", use a completely different simpler example
-
-📋 Mandatory Response Format:
-Your response MUST have TWO separate parts:
-
-Part 1 (Chat explanation):
-Give a detailed, step-by-step explanation in clear English.
-Use examples and analogies appropriate for the student's grade level.
-Goal: The student fully understands from reading the chat.
-
----WHITEBOARD---
-Part 2 (Whiteboard):
-Write this like a real teacher on a physical whiteboard.
-- Only key points and formulas
-- Use ## for main titles/headings
-- Write the formula clearly (start line with ##)
-- Write the final answer clearly (start with ## Final Answer)
-- Important notes (start with Note:)
-- Must be SHORT and DIFFERENT from the chat explanation
-- Maximum 10-12 lines total
-
-Example whiteboard format:
-## Newton's Second Law
-Force = Mass × Acceleration
-F = m × a
-
-## Steps
-1. Identify given values
-2. Apply the formula
-3. Calculate the result
-
-## Final Answer
-F = 10 × 5 = 50 N
-
-Note: Force is always in the direction of acceleration`;
+  CRITICAL: You MUST respond in a strict JSON format. No extra text before or after the JSON.
+  
+  JSON Structure:
+  {
+    "chat_explanation": "Detailed, friendly pedagogical explanation for the chat box (HTML supported).",
+    "board_actions": [
+      { "type": "WRITE", "content": "Topic Title", "color": "blue", "importance": "high" },
+      { "type": "DRAW", "shape": "circle", "label": "Atom Core" },
+      { "type": "WRITE", "content": "Formula: E=mc²", "color": "red" },
+      { "type": "STICKER", "query": "human cell diagram", "caption": "Cell Structure" }
+    ],
+    "teacher_voice": "Short encouragement or warm-up question."
   }
+
+  Rules:
+  1. chat_explanation: Detailed, step-by-step.
+  2. board_actions: Concise, visual-only. Use Blue for titles, Red for results, Green for notes.
+  3. Never repeat chat text on the board. The board is for summaries/visuals.
+  4. Use ${isArabic ? 'Arabic' : 'English'} for all text content.`;
+}
+
+/**
+ * دالة ذكية لتحليل الرد سواء كان JSON أو نص عادي
+ */
+function parseAIResponse(aiFullResponse) {
+  try {
+    // محاولة استخراج JSON من بين أي نصوص زائدة
+    const jsonMatch = aiFullResponse.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const data = JSON.parse(jsonMatch[0]);
+      return {
+        chatResponse: data.chat_explanation + (data.teacher_voice ? `\n\n_${data.teacher_voice}_` : ""),
+        whiteboardContent: JSON.stringify(data.board_actions) // نرسلها كـ JSON للـ Frontend ليترجمها لأوامر
+      };
+    }
+  } catch (e) {
+    console.error("JSON Parsing failed, falling back to regex", e);
+  }
+
+  // Fallback if AI fails to give JSON
+  const parts = aiFullResponse.split('---WHITEBOARD---');
+  return {
+    chatResponse: parts[0].trim(),
+    whiteboardContent: parts[1] ? parts[1].trim() : ""
+  };
 }
 
 
@@ -282,10 +238,10 @@ Note: Force is always in the direction of acceleration`;
 // AI Router (with Fallback Chain)
 // ============================================
 
-async function getAIResponse(userMessage, educationType = 'arabic', gradeLevel = 'sec3') {
+async function getAIResponse(userMessage, educationType = 'arabic', gradeLevel = 'sec3', fileData = null) {
   const providers = [
     { name: 'Groq', fn: (msg, edu) => callGroqAPI(msg, edu, gradeLevel), enabled: !!process.env.GROQ_API_KEY },
-    { name: 'Gemini', fn: (msg, edu) => callGeminiAPI(msg, edu, gradeLevel), enabled: !!process.env.GEMINI_API_KEY },
+    { name: 'Gemini', fn: (msg, edu) => callGeminiAPI(msg, edu, gradeLevel, fileData), enabled: !!process.env.GEMINI_API_KEY },
     { name: 'BlackBox', fn: (msg, edu) => callBlackBoxAPI(msg, edu, gradeLevel), enabled: !!process.env.BLACKBOX_API_KEY }
   ];
   
@@ -515,14 +471,14 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
     console.log('\n📨 New Chat Request');
     console.log('User:', req.user?.email || 'test user');
     
-    const { message, educationType = 'arabic', gradeLevel = 'sec3' } = req.body;
+    const { message, educationType = 'arabic', gradeLevel = 'sec3', file = null } = req.body;
 
     if (!message || !message.trim()) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // استدعاء الـ AI مع الصف الدراسي
-    const aiFullResponse = await getAIResponse(message, educationType, gradeLevel);
+    // استدعاء الـ AI مع الصف الدراسي والملف
+    const aiFullResponse = await getAIResponse(message, educationType, gradeLevel, file);
     
     // فصل الردين
     const { chatResponse, whiteboardContent } = parseAIResponse(aiFullResponse);

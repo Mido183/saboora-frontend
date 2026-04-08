@@ -1,280 +1,257 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// ====================================================
-// ألوان الطباشير - غيرها هنا لتغيير ألوان السبورة
-// ====================================================
-const CHALK_COLORS = {
-  black:  '#1a1a2e',  // لون العناوين والنص العام
-  blue:   '#1d4ed8',  // لون القوانين والمعادلات
-  red:    '#dc2626',  // لون الإجابات والنتائج
-  green:  '#16a34a',  // لون الملاحظات والتنبيهات
+// ألوان الماركر الواقعية
+const MARKER_COLORS = {
+  black: '#1a1a1a',
+  blue: '#2563eb',
+  red: '#dc2626',
+  green: '#16a34a',
+  purple: '#9333ea',
 };
 
-// ====================================================
-// دالة تحليل المحتوى وتقطيعه إلى شرائح منطقية
-// ====================================================
-function parseContentToSlides(content) {
-  if (!content) return [];
-  const slideSeparators = /(?=##\s)/g;
-  const rawSections = content.split(slideSeparators).filter(s => s.trim());
+// أصوات القلم (Pen Clicks)
+const playPenSound = () => {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const oscillator = audioContext.createOscillator();
+  const gainNode = audioContext.createGain();
 
-  if (rawSections.length <= 1) {
-    // إذا لم يكن هناك تقسيم واضح، نقسم على 8 أسطر لكل شريحة
-    const lines = content.split('\n').filter(l => l.trim());
-    const slides = [];
-    for (let i = 0; i < lines.length; i += 7) {
-      slides.push(lines.slice(i, i + 7).join('\n'));
-    }
-    return slides.length > 0 ? slides : [content];
-  }
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(800 + Math.random() * 200, audioContext.currentTime);
+  
+  gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.05);
 
-  return rawSections;
-}
+  oscillator.connect(gainNode);
+  gainNode.connect(audioContext.destination);
 
-// ====================================================
-// تحديد لون النص بناءً على محتواه
-// ====================================================
-function getLineColor(line) {
-  const lowerLine = line.toLowerCase();
-  if (
-    line.startsWith('##') ||
-    line.includes('قانون') || line.includes('Formula') ||
-    line.includes('القانون') || line.includes('معادلة')
-  ) return CHALK_COLORS.blue;
+  oscillator.start();
+  oscillator.stop(audioContext.currentTime + 0.05);
+};
 
-  if (
-    line.includes('الإجابة') || line.includes('الجواب') ||
-    line.includes('Answer') || line.includes('النتيجة') ||
-    line.includes('إذن') || line.includes('∴')
-  ) return CHALK_COLORS.red;
-
-  if (
-    line.includes('ملاحظة') || line.includes('Note') ||
-    line.includes('تذكر') || line.includes('⚠️') ||
-    line.includes('💡')
-  ) return CHALK_COLORS.green;
-
-  return CHALK_COLORS.black;
-}
-
-// ====================================================
-// المكوّن الرئيسي للسبورة
-// ====================================================
 const Whiteboard = ({ aiContent, isWriting, educationType = 'arabic' }) => {
-  const [slides, setSlides] = useState([]);
-  const [currentSlide, setCurrentSlide] = useState(0);
-  const [visibleLines, setVisibleLines] = useState([]);
+  const [slides, setSlides] = useState([[]]);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
-  const animationRef = useRef(null);
+  const canvasRef = useRef(null);
+  const drawingQueue = useRef([]);
 
-  // تقسيم المحتوى إلى شرائح عند تغيير المحتوى
-  useEffect(() => {
-    if (!aiContent) return;
-    const parsed = parseContentToSlides(aiContent);
-    setSlides(parsed);
-    setCurrentSlide(0);
-    setVisibleLines([]);
-  }, [aiContent]);
+  // تأثير اهتزاز بسيط (Jitter) للرسم اليدوي
+  const getJitter = (amount = 1.5) => (Math.random() - 0.5) * amount;
 
-  // تشغيل أنيميشن الكتابة عند تغيير الشريحة
-  useEffect(() => {
-    if (slides.length === 0) return;
-    const currentContent = slides[currentSlide];
-    if (!currentContent) return;
-
-    // إلغاء أي أنيميشن سابق
-    if (animationRef.current) clearTimeout(animationRef.current);
-    setVisibleLines([]);
-    setIsAnimating(true);
-
-    const lines = currentContent
-      .split('\n')
-      .filter(l => l.trim())
-      .map(line => ({
-        text: line.trim(),
-        color: getLineColor(line),
-        isTitle: line.startsWith('##'),
-        isBold: line.startsWith('**') || line.startsWith('#'),
-      }));
-
-    let i = 0;
-    const addNextLine = () => {
-      if (i < lines.length) {
-        const currentLine = lines[i];
-        setVisibleLines(prev => [...prev, currentLine]);
-        i++;
-        const delay = currentLine.isTitle ? 600 : 350;
-        animationRef.current = setTimeout(addNextLine, delay);
-      } else {
-        setIsAnimating(false);
-      }
-    };
-    animationRef.current = setTimeout(addNextLine, 200);
-
-    return () => { if (animationRef.current) clearTimeout(animationRef.current); };
-  }, [slides, currentSlide]);
-
-  const goToSlide = (index) => {
-    if (index >= 0 && index < slides.length) {
-      setCurrentSlide(index);
+  // دالة محاكاة الكتابة البشرية (Handwriting Animation)
+  const drawTextHandwritten = async (ctx, text, x, y, color = MARKER_COLORS.black, fontSize = 28) => {
+    ctx.font = `${fontSize}px "Gochi Hand", "Cairo", cursive`;
+    ctx.fillStyle = color;
+    
+    let currentX = x;
+    const chars = text.split('');
+    
+    for (const char of chars) {
+      const jitterX = getJitter(1);
+      const jitterY = getJitter(1);
+      ctx.fillText(char, currentX + jitterX, y + jitterY);
+      
+      const charWidth = ctx.measureText(char).width;
+      currentX += charWidth + 1;
+      
+      // صوت القلم
+      if (Math.random() > 0.6) playPenSound();
+      
+      // تأخير متغير لمحاكاة السرعة البشرية
+      await new Promise(r => setTimeout(r, 30 + Math.random() * 40));
     }
   };
 
-  // تنسيق النص: إزالة الماركداون البسيط وتنظيفه
-  const formatText = (text) => {
-    return text
-      .replace(/^#{1,3}\s*/, '')   // إزالة ## من العناوين
-      .replace(/\*\*/g, '')        // إزالة **Bold**
-      .replace(/^\d+\.\s*/, match => match) // الحفاظ على الأرقام
-      .trim();
+  // رسم أشكال مع اهتزاز (Jitter) لتبدو مرسومة باليد
+  const drawShapeHanddrawn = async (ctx, action) => {
+    ctx.strokeStyle = MARKER_COLORS[action.color] || MARKER_COLORS.blue;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+
+    const { shape, x = 400, y = 300, size = 100, label } = action;
+
+    if (shape === 'circle') {
+      // رسم دائرة مهتزة تدريجياً
+      for (let i = 0; i <= Math.PI * 2; i += 0.1) {
+        const radius = size + getJitter(3);
+        const px = x + Math.cos(i) * radius;
+        const py = y + Math.sin(i) * radius;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+        ctx.stroke();
+        await new Promise(r => setTimeout(r, 10));
+      }
+    } else if (shape === 'line') {
+      const { x2, y2 } = action;
+      ctx.moveTo(x + getJitter(2), y + getJitter(2));
+      ctx.lineTo(x2 + getJitter(2), y2 + getJitter(2));
+      ctx.stroke();
+    }
+
+    if (label) {
+      await drawTextHandwritten(ctx, label, x - 20, y + size + 30, ctx.strokeStyle, 20);
+    }
+  };
+
+  // إضافة صورة (Sticker)
+  const drawSticker = (ctx, query, x, y, caption) => {
+    const img = new Image();
+    // استخدام مصدر صور تعليمي افتراضي أو Placeholder
+    img.src = `https://unavatar.io/duckduckgo/${encodeURIComponent(query)}`;
+    img.onload = () => {
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "rgba(0,0,0,0.1)";
+      ctx.drawImage(img, x, y, 150, 150);
+      ctx.shadowBlur = 0;
+      if (caption) {
+        drawTextHandwritten(ctx, caption, x, y + 170, MARKER_COLORS.black, 16);
+      }
+    };
+  };
+
+  // معالجة قائمة الأوامر (Action Processor)
+  const processActions = async (actions) => {
+    if (!canvasRef.current || actions.length === 0) return;
+    setIsAnimating(true);
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    let currentY = 80;
+    const margin = 50;
+
+    for (const action of actions) {
+      switch (action.type) {
+        case 'WRITE':
+          const fontSize = action.importance === 'high' ? 36 : 26;
+          const color = MARKER_COLORS[action.color] || MARKER_COLORS.black;
+          await drawTextHandwritten(ctx, action.content, margin, currentY, color, fontSize);
+          currentY += fontSize + 20;
+          break;
+        case 'DRAW':
+          await drawShapeHanddrawn(ctx, action);
+          break;
+        case 'STICKER':
+          drawSticker(ctx, action.query, 450, currentY, action.caption);
+          break;
+        case 'CLEAR':
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          currentY = 80;
+          break;
+        default:
+          break;
+      }
+      await new Promise(r => setTimeout(r, 500)); // فاصل بين الأوامر
+    }
+    setIsAnimating(false);
+  };
+
+  // استقبال المحتوى وتفسيره كـ JSON
+  useEffect(() => {
+    if (!aiContent || !isWriting) return;
+
+    try {
+      const actions = JSON.parse(aiContent);
+      if (Array.isArray(actions)) {
+        // إذا كان هناك محتوى جديد، نضيف شريحة جديدة
+        setSlides(prev => [...prev, actions]);
+        setCurrentSlideIndex(prev => prev + 1);
+        processActions(actions);
+      }
+    } catch (e) {
+      // Fallback للنص العادي إذا فشل الـ JSON
+      const fallbackActions = [{ type: 'WRITE', content: aiContent, color: 'black' }];
+      setSlides(prev => [...prev, fallbackActions]);
+      setCurrentSlideIndex(prev => prev + 1);
+      processActions(fallbackActions);
+    }
+  }, [aiContent, isWriting]);
+
+  // تبديل الشرائح
+  const goToSlide = (index) => {
+    if (index >= 0 && index < slides.length) {
+      setCurrentSlideIndex(index);
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // إعادة رسم محتوى الشريحة المختارة (بدون أنيميشن طويل للسرعة)
+      const actions = slides[index];
+      if (actions) {
+        actions.forEach(a => {
+          if (a.type === 'WRITE') {
+            ctx.font = `${a.importance === 'high' ? 36 : 26}px "Gochi Hand", cursive`;
+            ctx.fillStyle = MARKER_COLORS[a.color] || MARKER_COLORS.black;
+            ctx.fillText(a.content, 50, 80 + index * 50); // تبسيط للإعادة
+          }
+        });
+      }
+    }
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col rounded-xl overflow-hidden shadow-xl"
-      style={{ background: 'var(--color-whiteboard-bg, #fffdf5)' }}>
-
-      {/* ============ Header شريط العنوان ============ */}
-      <div className="whiteboard-header flex items-center justify-between px-5 py-3 shrink-0">
-        <div className="text-white font-bold text-lg flex items-center gap-2"
-          style={{ fontFamily: 'Cairo, sans-serif' }}>
-          <span className="text-2xl">✏️</span>
-          <span>السبورة</span>
-          {isAnimating && (
-            <span className="text-xs bg-white/20 px-2 py-1 rounded-full animate-pulse">
-              يكتب...
-            </span>
-          )}
+    <div className="relative w-full h-full flex flex-col bg-[#fffdf5] rounded-xl overflow-hidden shadow-2xl border-8 border-amber-900/10">
+      
+      {/* Header بنمط خشبي */}
+      <div className="h-14 bg-gradient-to-r from-amber-900 to-amber-800 flex items-center justify-between px-6 shadow-lg z-10">
+        <div className="flex items-center gap-3 text-white">
+          <span className={`text-2xl ${isAnimating ? 'animate-bounce' : ''}`}>✏️</span>
+          <h2 className="font-bold text-lg" style={{ fontFamily: 'Cairo' }}>
+            {educationType === 'arabic' ? 'السبورة التفاعلية' : 'Interactive Board'}
+          </h2>
         </div>
-
-        <div className="flex items-center gap-3">
-          {/* مؤشر الشريحة */}
-          {slides.length > 1 && (
-            <span className="text-white/80 text-sm" style={{ fontFamily: 'Cairo, sans-serif' }}>
-              شريحة {currentSlide + 1} / {slides.length}
-            </span>
-          )}
-
-          {/* أزرار */}
-          <button
-            onClick={() => { setVisibleLines([]); setSlides([]); setIsAnimating(false); }}
-            className="px-3 py-1 bg-red-500/80 hover:bg-red-600 text-white rounded text-sm transition-colors"
-            title="مسح السبورة"
-          >
-            🗑️ مسح
-          </button>
+        
+        <div className="flex gap-4 items-center">
+           {slides.length > 1 && (
+             <div className="flex gap-2 bg-white/10 px-3 py-1 rounded-full">
+                <button onClick={() => goToSlide(currentSlideIndex - 1)} disabled={currentSlideIndex === 0}>◀</button>
+                <span className="text-white text-xs">{currentSlideIndex + 1} / {slides.length}</span>
+                <button onClick={() => goToSlide(currentSlideIndex + 1)} disabled={currentSlideIndex === slides.length - 1}>▶</button>
+             </div>
+           )}
+           <button 
+            className="p-2 hover:bg-white/20 rounded-full transition-colors text-white"
+            onClick={() => {
+              const ctx = canvasRef.current.getContext('2d');
+              ctx.clearRect(0, 0, 1200, 800);
+            }}
+           >
+             🗑️
+           </button>
         </div>
       </div>
 
-      {/* ============ منطقة المحتوى الرئيسية ============ */}
-      <div className="flex-1 flex overflow-hidden">
-
-        {/* شريط الشرائح الجانبي */}
-        {slides.length > 1 && (
-          <div className="w-20 shrink-0 bg-gray-100 border-l border-gray-200 flex flex-col gap-2 p-2 overflow-y-auto">
-            {slides.map((_, index) => (
-              <button
-                key={index}
-                onClick={() => goToSlide(index)}
-                className={`w-full aspect-video rounded-lg border-2 flex items-center justify-center text-xs font-bold transition-all
-                  ${currentSlide === index
-                    ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-md'
-                    : 'border-gray-300 bg-white text-gray-500 hover:border-blue-300'
-                  }`}
-                style={{ fontFamily: 'Cairo, sans-serif' }}
-              >
-                {index + 1}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* منطقة الكتابة */}
-        <div className="flex-1 overflow-y-auto p-8 relative"
-          style={{
-            backgroundImage: `repeating-linear-gradient(transparent, transparent 39px, #e5e0d0 39px, #e5e0d0 40px)`,
-            backgroundPositionY: '8px',
-          }}>
-
-          {/* حالة فارغة */}
-          {slides.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
-              <div className="text-7xl mb-4">📋</div>
-              <p className="text-xl" style={{ fontFamily: 'Cairo, sans-serif' }}>
-                ابدأ المحادثة وسيظهر الشرح هنا
-              </p>
-              <p className="text-sm mt-2" style={{ fontFamily: 'Cairo, sans-serif' }}>
-                سيقوم المدرس بكتابة أهم النقاط على السبورة
-              </p>
-            </div>
+      {/* منطقة الـ Canvas */}
+      <div className="flex-1 relative overflow-hidden bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:40px_40px]">
+        <canvas
+          ref={canvasRef}
+          width={1200}
+          height={800}
+          className="w-full h-full cursor-crosshair"
+          style={{ imageRendering: 'pixelated' }}
+        />
+        
+        {/* أنيميشن المسح (Wipe) */}
+        <AnimatePresence>
+          {isWriting && (
+            <motion.div 
+              initial={{ scaleX: 0 }}
+              animate={{ scaleX: 1 }}
+              exit={{ scaleX: 0 }}
+              className="absolute inset-0 bg-white/40 origin-left pointer-events-none backdrop-blur-[1px]"
+              transition={{ duration: 0.5 }}
+            />
           )}
-
-          {/* الأسطر بالأنيميشن */}
-          <div className="max-w-3xl mx-auto" dir="rtl">
-            <AnimatePresence>
-              {visibleLines.map((line, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -15 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.3, ease: 'easeOut' }}
-                  className="writing-line mb-1"
-                  style={{
-                    color: line.color,
-                    fontFamily: line.isTitle ? "'Cairo', sans-serif" : "'Cairo', 'Tajawal', sans-serif",
-                    fontSize: line.isTitle ? '26px' : '20px',
-                    fontWeight: line.isTitle ? '700' : '400',
-                    lineHeight: '40px',
-                    letterSpacing: '0.3px',
-                    textDecoration: line.isTitle ? 'underline' : 'none',
-                    textUnderlineOffset: '4px',
-                    paddingBottom: line.isTitle ? '4px' : '0',
-                    marginTop: line.isTitle ? '12px' : '0',
-                  }}
-                >
-                  {/* أيقونة للعناوين */}
-                  {line.isTitle && <span className="ml-2">📌</span>}
-                  {formatText(line.text)}
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </div>
-        </div>
+        </AnimatePresence>
       </div>
 
-      {/* ============ أزرار التنقل بين الشرائح ============ */}
-      {slides.length > 1 && (
-        <div className="shrink-0 bg-gray-50 border-t border-gray-200 px-4 py-3 flex items-center justify-center gap-4">
-          <button
-            onClick={() => goToSlide(currentSlide - 1)}
-            disabled={currentSlide === 0}
-            className="px-5 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm text-sm"
-            style={{ fontFamily: 'Cairo, sans-serif' }}
-          >
-            ◀ السابق
-          </button>
-
-          {/* دوائر التنقل */}
-          <div className="flex gap-2">
-            {slides.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => goToSlide(i)}
-                className={`w-3 h-3 rounded-full transition-all ${
-                  i === currentSlide ? 'bg-blue-600 scale-125' : 'bg-gray-300 hover:bg-gray-400'
-                }`}
-              />
-            ))}
-          </div>
-
-          <button
-            onClick={() => goToSlide(currentSlide + 1)}
-            disabled={currentSlide === slides.length - 1}
-            className="px-5 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm text-sm"
-            style={{ fontFamily: 'Cairo, sans-serif' }}
-          >
-            التالي ▶
-          </button>
+      {/* مؤشر الحالة */}
+      {isAnimating && (
+        <div className="absolute bottom-6 right-6 bg-white shadow-2xl rounded-2xl p-4 flex items-center gap-4 border border-blue-100 animate-pulse">
+           <div className="w-4 h-4 bg-blue-600 rounded-full" />
+           <span className="text-sm font-bold text-blue-900" style={{ fontFamily: 'Cairo' }}>
+             {educationType === 'arabic' ? 'الأستاذ يكتب الآن...' : 'Teacher is writing...'}
+           </span>
         </div>
       )}
     </div>
