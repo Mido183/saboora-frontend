@@ -2,16 +2,127 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* ====================================================
+   استيراد خطوط عربية احترافية من Google Fonts
+   ==================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&family=Tajawal:wght@300;400;500;700&family=Amiri:ital,wght@0,400;0,700;1,400&display=swap');
+
+/* ====================================================
+   المتغيرات العامة - غير الألوان من هنا فقط!
+   ==================================================== */
+:root {
+  --color-bg: #242424;
+  --color-primary: #2563eb;
+  /* اللون الرئيسي - الأزرق */
+  --color-secondary: #7c3aed;
+  /* اللون الثانوي - البنفسجي */
+  --color-header: #1e293b;
+  /* لون الهيدر */
+  --color-whiteboard-bg: #fffdf5;
+  /* خلفية السبورة - بيضاء مائلة للكريمي */
+  --color-chalk-black: #1a1a2e;
+  /* لون الطباشير الأسود */
+  --color-chalk-blue: #1d4ed8;
+  /* لون الطباشير الأزرق */
+  --color-chalk-red: #dc2626;
+  /* لون الطباشير الأحمر */
+  --color-chalk-green: #16a34a;
+  /* لون الطباشير الأخضر */
+  --font-arabic: 'Cairo', 'Tajawal', sans-serif;
+  --font-arabic-elegant: 'Amiri', serif;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* ====================================================
+   إعدادات عامة
+   ==================================================== */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-arabic);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--color-bg);
+  direction: rtl;
+}
+
+/* ====================================================
+   تنسيق السبورة - يمكنك تعديل هذه القيم
+   ==================================================== */
+.whiteboard-container {
+  background-color: var(--color-whiteboard-bg);
+  /* لتغيير لون خلفية السبورة: غير --color-whiteboard-bg أعلاه */
+  /* مثال: #e8f5e9 للأخضر الفاتح، #fff3e0 للبرتقالي الفاتح */
+}
+
+.whiteboard-header {
+  /* لتغيير لون شريط العنوان: غير اللون هنا */
+  background: linear-gradient(135deg, #78350f, #92400e);
+  /* مثال: linear-gradient(135deg, #1e3a5f, #2563eb) للأزرق */
+}
+
+/* ====================================================
+   أنيميشن الكتابة
+   ==================================================== */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes writeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.slide-content {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+.writing-line {
+  animation: writeIn 0.3s ease-out;
+}
+
+/* ====================================================
+   تنسيق الشات
+   ==================================================== */
+.chat-message {
+  font-family: var(--font-arabic);
+  line-height: 1.8;
+  font-size: 15px;
+}
+
+/* ====================================================
+   Scrollbar مخصص
+   ==================================================== */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
 }
