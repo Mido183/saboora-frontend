@@ -34,7 +34,8 @@ const Chat = ({ onAIResponse, educationType = 'arabic' }) => {
 
     try {
       // استدعاء الـ API
-      const response = await fetch('/api/chat', {
+      const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3000";
+      const response = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
