@@ -113,9 +113,9 @@ const Chat = ({ onAIResponse, educationType = 'arabic', gradeLevel = 'sec3', stu
           timestamp: new Date().toISOString()
         }]);
 
-        // إرسال أوامر السبورة
+        // إرسال أوامر السبورة + الصورة
         if (onAIResponse && data.whiteboardContent) {
-          onAIResponse(data.whiteboardContent);
+          onAIResponse(data.whiteboardContent, data.whiteboardImage || null);
         }
       } else {
         throw new Error(data.error || 'خطأ غير معروف');
@@ -207,14 +207,52 @@ const Chat = ({ onAIResponse, educationType = 'arabic', gradeLevel = 'sec3', stu
 
         {isLoading && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: 'flex', justifyContent: isArabic ? 'flex-end' : 'flex-start' }}>
-            <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '18px 18px 18px 4px', padding: '14px 20px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-              {[0, 1, 2].map(i => (
-                <motion.div key={i} animate={{ y: [0, -6, 0] }} transition={{ repeat: Infinity, delay: i * 0.15, duration: 0.6 }}
-                  style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2563eb' }} />
-              ))}
+            <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '18px 18px 18px 4px', padding: '12px 18px', display: 'flex', gap: '8px', alignItems: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {[0, 1, 2].map(i => (
+                  <motion.div key={i} animate={{ y: [0, -6, 0] }} transition={{ repeat: Infinity, delay: i * 0.15, duration: 0.6 }}
+                    style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2563eb' }} />
+                ))}
+              </div>
+              <span style={{ fontSize: '12px', color: '#64748b', fontFamily: 'Cairo' }}>
+                {isArabic ? '🧠 المعلم يفكر ويكتب على السبورة...' : '🧠 Teacher is thinking...'}
+              </span>
             </div>
           </motion.div>
         )}
+
+        {/* اقتراحات سريعة - تظهر فقط عند الرسالة الأولى */}
+        {messages.length <= 1 && !isLoading && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: isArabic ? 'flex-end' : 'flex-start', padding: '4px 0' }}>
+            {(isArabic ? [
+              '⚗️ شرح مكونات الذرة',
+              '📐 قانون نيوتن الثاني',
+              '🧮 مساحة المثلث',
+              '⚡ قانون أوم',
+              '🔬 الخلية الحية',
+            ] : [
+              '📐 Triangle Area',
+              '⚡ Ohm\'s Law',
+              '🔬 Cell Biology',
+              '🌍 Photosynthesis',
+            ]).map(q => (
+              <button key={q}
+                onClick={() => { setInputValue(q.replace(/^[\p{Emoji}\s]+/u, '').trim()); }}
+                style={{
+                  background: 'white', border: '1.5px solid #bfdbfe', color: '#1d4ed8',
+                  borderRadius: '20px', padding: '6px 14px', cursor: 'pointer',
+                  fontSize: '12px', fontFamily: 'Cairo', fontWeight: '600',
+                  transition: 'all 0.2s', whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={e => { e.target.style.background = '#eff6ff'; e.target.style.borderColor = '#2563eb'; }}
+                onMouseLeave={e => { e.target.style.background = 'white'; e.target.style.borderColor = '#bfdbfe'; }}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

@@ -12,7 +12,7 @@
    ==================================================== */
 :root {
   --color-bg: #242424;
-  --color-primary: #000000;
+  --color-primary: #2563eb;
   /* اللون الرئيسي - الأزرق */
   --color-secondary: #7c3aed;
   /* اللون الثانوي - البنفسجي */
@@ -59,7 +59,7 @@ body {
 
 .whiteboard-header {
   /* لتغيير لون شريط العنوان: غير اللون هنا */
-  background: linear-gradient(135deg, #6b3313, #92400e);
+  background: linear-gradient(135deg, #78350f, #92400e);
   /* مثال: linear-gradient(135deg, #1e3a5f, #2563eb) للأزرق */
 }
 
@@ -112,17 +112,25 @@ body {
    ==================================================== */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 3px;
+  background: #cbd5e1;
+  border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  background: #94a3b8;
+}
+
+.saboora-glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }

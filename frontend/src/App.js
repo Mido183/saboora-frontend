@@ -162,6 +162,7 @@ function App() {
 
   const [aiContent, setAiContent] = useState('');
   const [isWriting, setIsWriting] = useState(false);
+  const [whiteboardImage, setWhiteboardImage] = useState(null);
 
   // 2. دالة حفظ الملف الشخصي الجديد
   const saveProfile = (profile) => {
@@ -173,15 +174,17 @@ function App() {
   const logout = () => {
     localStorage.removeItem('saboora_profile');
     setStudentProfile(null);
+    setAiContent('');
+    setWhiteboardImage(null);
   };
 
-  const handleAIResponse = (content) => {
+  const handleAIResponse = (content, image = null) => {
     if (!content) return;
     setAiContent(content);
+    if (image) setWhiteboardImage(image);
     setIsWriting(true);
-    setTimeout(() => {
-      setIsWriting(false);
-    }, Math.min((content?.length || 0) * 40, 8000));
+    const approxTime = Math.min((content?.length || 0) * 35, 10000);
+    setTimeout(() => setIsWriting(false), approxTime);
   };
 
   // عرض شاشة الترحيب إذا لم يكن موجوداً
@@ -248,6 +251,7 @@ function App() {
             <Whiteboard
               aiContent={aiContent}
               isWriting={isWriting}
+              whiteboardImage={whiteboardImage}
               educationType={studentProfile.educationType}
             />
           </div>

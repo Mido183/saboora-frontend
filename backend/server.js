@@ -1,5 +1,5 @@
 // ============================================
-// Saboora Backend - نسخة محسّنة مع 3 AI Providers
+// Saboora Backend - نظام الذكاء المزدوج المحسّن
 // ============================================
 
 const express = require('express');
@@ -16,14 +16,12 @@ const app = express();
 // ============================================
 
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
+const JWT_SECRET = process.env.JWT_SECRET || 'saboora-secret-key';
 
 // Middleware
-app.use(cors({
-  origin: '*', // للسماح بكل الاتصالات أثناء التطوير
-  credentials: true
-}));
+app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Request logging
 app.use((req, res, next) => {
@@ -38,292 +36,307 @@ const supabase = createClient(
 );
 
 // ============================================
-// AI Providers Integration
+// PROMPTS - المنطق الجوهري للتدريس
 // ============================================
 
-// 1️⃣ Groq API (Primary - Free!)
-async function callGroqAPI(userMessage, educationType = 'arabic', gradeLevel = 'sec3') {
-  console.log('🚀 Trying Groq API...');
-  
-  try {
-    const systemPrompt = createSystemPrompt(educationType, gradeLevel);
-    
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        temperature: 0.7,
-        max_tokens: 2000
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Groq API Error:', response.status, errorText);
-      throw new Error(`Groq API failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log('✅ Groq API Success!');
-    return data.choices[0].message.content;
-
-  } catch (error) {
-    console.error('❌ Groq Error:', error.message);
-    throw error;
-  }
-}
-
-// 2️⃣ Gemini API (Fallback #1)
-async function callGeminiAPI(userMessage, educationType = 'arabic', gradeLevel = 'sec3', fileData = null) {
-  console.log('🚀 Trying Gemini API (with Multi-modal support)...');
-  
-  try {
-    const systemPrompt = createSystemPrompt(educationType, gradeLevel);
-    
-    // إعداد محتوى الرسالة
-    const parts = [{ text: `${systemPrompt}\n\nالسؤال: ${userMessage}` }];
-
-    // إذا كان هناك ملف (Base64)
-    if (fileData && fileData.data) {
-      console.log('📎 Adding file to Gemini request:', fileData.name);
-      const base64Content = fileData.data.split(',')[1];
-      parts.push({
-        inline_data: {
-          mime_type: fileData.type || "image/jpeg",
-          data: base64Content
-        }
-      });
-    }
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: 2500 }
-        })
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    if (!data.candidates || !data.candidates[0]) throw new Error('Gemini: No response');
-    
-    console.log('✅ Gemini API Content Received!');
-    return data.candidates[0].content.parts[0].text;
-
-  } catch (error) {
-    console.error('❌ Gemini Error:', error.message);
-    throw error;
-  }
-}
-
-// 3️⃣ BlackBox API (Fallback #2)
-async function callBlackBoxAPI(userMessage, educationType = 'arabic', gradeLevel = 'sec3') {
-  console.log('🚀 Trying BlackBox API...');
-  
-  try {
-    const systemPrompt = createSystemPrompt(educationType, gradeLevel);
-    
-    const response = await fetch('https://api.blackbox.ai/api/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.BLACKBOX_API_KEY}`
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        model: 'blackbox',
-        max_tokens: 2000
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ BlackBox API Error:', response.status, errorText);
-      throw new Error(`BlackBox API failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log('✅ BlackBox API Success!');
-    return data.response || data.message || data.choices?.[0]?.message?.content;
-
-  } catch (error) {
-    console.error('❌ BlackBox Error:', error.message);
-    throw error;
-  }
-}
-
-// ============================================
-// System Prompt Generator
-// ============================================
-
-function createSystemPrompt(educationType, gradeLevel = 'sec3') {
-  const isArabic = educationType === 'arabic';
+function createChatSystemPrompt(educationType, gradeLevel) {
   const gradeName = {
     sec3: 'الثانوية العامة', sec2: 'الثاني الثانوي', sec1: 'الأول الثانوي',
     prep3: 'الثالث الإعدادي', prep2: 'الثاني الإعدادي', prep1: 'الأول الإعدادي',
     primary6: 'السادس الابتدائي', primary5: 'الخامس الابتدائي', primary4: 'الرابع الابتدائي',
+    grade12: 'Grade 12', grade11: 'Grade 11', grade10: 'Grade 10 (IGCSE/A-Level)',
+    grade9: 'Grade 9', grade8: 'Grade 8', grade7: 'Grade 7',
   }[gradeLevel] || gradeLevel;
 
-  return `You are "Saboora AI", a professional multi-modal tutor. 
-  Student Level: ${gradeName} - ${isArabic ? 'Arabic' : 'English'} Curriculum.
+  const isArabic = educationType === 'arabic';
 
-  CRITICAL: You MUST respond in a strict JSON format. No extra text before or after the JSON.
-  
-  JSON Structure:
-  {
-    "chat_explanation": "Detailed, friendly pedagogical explanation for the chat box (HTML supported).",
-    "board_actions": [
-      { "type": "WRITE", "content": "Topic Title", "color": "blue", "importance": "high" },
-      { "type": "DRAW", "shape": "circle", "label": "Atom Core" },
-      { "type": "WRITE", "content": "Formula: E=mc²", "color": "red" },
-      { "type": "STICKER", "query": "human cell diagram", "caption": "Cell Structure" }
-    ],
-    "teacher_voice": "Short encouragement or warm-up question."
-  }
+  return `أنت مدرس خصوصي متميز (Saboora AI) متخصص في تعليم طلاب المرحلة ${gradeName}.
 
-  Rules:
-  1. chat_explanation: Detailed, step-by-step.
-  2. board_actions: Concise, visual-only. Use Blue for titles, Red for results, Green for notes.
-  3. Never repeat chat text on the board. The board is for summaries/visuals.
-  4. Use ${isArabic ? 'Arabic' : 'English'} for all text content.`;
+مهمتك: الشرح التفصيلي الكامل في رسالة الشات.
+
+📌 قواعد الشرح:
+1. ابدأ بمقدمة بسيطة تربط الموضوع بحياة الطالب
+2. اشرح الخطوات بالتفصيل الكامل مع الأسباب
+3. أعطِ مثالاً عملياً محلولاً بالكامل
+4. اذكر النقاط الهامة والأخطاء الشائعة
+5. انتهِ بسؤال للتحقق من الفهم
+
+📌 أسلوب الكتابة:
+- استخدم ${isArabic ? 'العربية الواضحة' : 'العربية للشرح والإنجليزية للمصطلحات العلمية'}
+- الكتابة ودودة ومحفزة
+- استخدم المعادلات بشكل واضح
+- لا تكن مقتضباً - الطالب يحتاج لفهم كامل
+
+لا تكتب "السبورة" أو محتواها، ذلك سيحدث تلقائياً.`;
 }
 
-/**
- * دالة ذكية لتحليل الرد سواء كان JSON أو نص عادي
- */
-function parseAIResponse(aiFullResponse) {
+function createWhiteboardSystemPrompt(educationType, gradeLevel) {
+  return `أنت مدرس يكتب على السبورة. قاعدة صارمة: 3-6 أسطر فقط.
+
+أعط ردك بالتنسيق التالي فقط (JSON صارم):
+{
+  "board_actions": [
+    { "type": "WRITE", "content": "📌 عنوان الموضوع", "color": "blue", "importance": "high" },
+    { "type": "WRITE", "content": "القانون أو المعادلة = ...", "color": "red", "size": "formula" },
+    { "type": "STICKER", "query": "كلمات بحث إنجليزية للصورة التوضيحية", "caption": "وصف الصورة بالعربية" },
+    { "type": "WRITE", "content": "الخطوة 1: ...", "color": "green" },
+    { "type": "WRITE", "content": "✅ الإجابة النهائية: ...", "color": "red" }
+  ]
+}
+
+قواعد الألوان:
+- blue: العناوين والقوانين الأساسية
+- red: الإجابات والنتائج والمعادلات
+- green: الخطوات والملاحظات
+
+قاعدة STICKER: أضف صورة واحدة فقط إذا كان الموضوع مرئياً (رياضيات/علوم/فيزياء). query يكون بالإنجليزية فقط.
+
+لا تزيد board_actions عن 6 عناصر. لا تكتب أي نص خارج الـ JSON.`;
+}
+
+function generateImageQuery(userMessage) {
+  return `أنت نظام بحث عن صور. استخرج من السؤال التالي كلمات بحث بالإنجليزية فقط (3 كلمات كحد أقصى).
+
+السؤال: "${userMessage}"
+
+أمثلة:
+- "احسب مساحة المثلث" → "triangle geometry diagram"  
+- "شرح الذرة" → "atom structure diagram"
+- "قانون نيوتن" → "newton law physics"
+
+اكتب كلمات البحث فقط، بدون أي نص آخر.`;
+}
+
+// ============================================
+// AI Provider: Groq (Primary)
+// ============================================
+
+async function callGroqWithPrompt(messages, maxTokens = 2000) {
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      messages,
+      temperature: 0.7,
+      max_tokens: maxTokens
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Groq failed: ${response.status} - ${err}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0].message.content;
+}
+
+// ============================================
+// AI Provider: Gemini (Fallback)
+// ============================================
+
+async function callGeminiWithPrompt(systemPrompt, userMessage, fileData = null) {
+  const parts = [{ text: `${systemPrompt}\n\nالسؤال: ${userMessage}` }];
+
+  if (fileData && fileData.data) {
+    const base64Content = fileData.data.split(',')[1];
+    parts.push({
+      inline_data: {
+        mime_type: fileData.type || "image/jpeg",
+        data: base64Content
+      }
+    });
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts }] })
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gemini failed: ${response.status} - ${err}`);
+  }
+
+  const data = await response.json();
+  return data.candidates[0].content.parts[0].text;
+}
+
+// ============================================
+// Dual AI Call (Chat + Whiteboard) in Parallel
+// ============================================
+
+async function getDualAIResponse(userMessage, educationType, gradeLevel, fileData = null) {
+  const chatPrompt = createChatSystemPrompt(educationType, gradeLevel);
+  const boardPrompt = createWhiteboardSystemPrompt(educationType, gradeLevel);
+
+  console.log('🤖 Starting dual AI calls in parallel...');
+
+  // استدعاء الـ AI للشات والسبورة بالتوازي
+  const [chatResult, boardResult] = await Promise.allSettled([
+    // Chat AI
+    (async () => {
+      if (process.env.GROQ_API_KEY) {
+        return await callGroqWithPrompt([
+          { role: 'system', content: chatPrompt },
+          { role: 'user', content: fileData ? `${userMessage}\n[الطالب أرفق صورة/ملف]` : userMessage }
+        ], 2000);
+      } else if (process.env.GEMINI_API_KEY) {
+        return await callGeminiWithPrompt(chatPrompt, userMessage, fileData);
+      }
+      throw new Error('No chat AI provider');
+    })(),
+
+    // Whiteboard AI (أسرع - رد مختصر)
+    (async () => {
+      if (process.env.GROQ_API_KEY) {
+        return await callGroqWithPrompt([
+          { role: 'system', content: boardPrompt },
+          { role: 'user', content: userMessage }
+        ], 600);
+      } else if (process.env.GEMINI_API_KEY) {
+        return await callGeminiWithPrompt(boardPrompt, userMessage);
+      }
+      throw new Error('No board AI provider');
+    })()
+  ]);
+
+  // معالجة نتيجة الشات
+  let chatResponse = '';
+  if (chatResult.status === 'fulfilled') {
+    chatResponse = chatResult.value;
+    console.log('✅ Chat AI: Success');
+  } else {
+    console.error('❌ Chat AI failed:', chatResult.reason);
+    chatResponse = 'عذراً، حدث خطأ في الاتصال. الرجاء المحاولة مرة أخرى.';
+  }
+
+  // معالجة نتيجة السبورة
+  let boardActions = [];
+  if (boardResult.status === 'fulfilled') {
+    console.log('✅ Board AI: Success');
+    boardActions = parseBoardActions(boardResult.value, userMessage);
+  } else {
+    console.error('❌ Board AI failed:', boardResult.reason);
+    // Fallback: استخرج من رد الشات
+    boardActions = autoGenerateBoardActions(chatResponse, userMessage);
+  }
+
+  return { chatResponse, boardActions };
+}
+
+// ============================================
+// Parse Board Actions from AI response
+// ============================================
+
+function parseBoardActions(rawResponse, userMessage) {
   try {
-    // محاولة استخراج JSON من بين أي نصوص زائدة
-    const jsonMatch = aiFullResponse.match(/\{[\s\S]*\}/);
+    // تنظيف markdown code blocks
+    const cleaned = rawResponse
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/g, '')
+      .trim();
+
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const data = JSON.parse(jsonMatch[0]);
+      if (data.board_actions && Array.isArray(data.board_actions) && data.board_actions.length > 0) {
+        console.log(`📋 Board: ${data.board_actions.length} actions parsed from JSON`);
+        return data.board_actions;
+      }
+    }
+  } catch (e) {
+    console.log('⚠️ Board JSON parse failed, using auto-generator');
+  }
+
+  return autoGenerateBoardActions(rawResponse, userMessage);
+}
+
+// توليد أوامر سبورة تلقائياً من نص عادي
+function autoGenerateBoardActions(text, userMessage) {
+  const lines = text.split('\n').filter(l => l.trim().length > 3);
+  const actions = [];
+
+  // عنوان من السؤال
+  const topic = userMessage.length < 40 ? userMessage : userMessage.substring(0, 40) + '...';
+  actions.push({ type: 'WRITE', content: `📌 ${topic}`, color: 'blue', importance: 'high' });
+
+  // استخراج أهم 4 أسطر
+  lines.slice(0, 5).forEach(line => {
+    const t = line.replace(/^[#*\-•\d.]\s*/, '').trim();
+    if (!t || t.length < 3) return;
+
+    if (/[=×÷²³]|القانون|Answer|Formula|Result/i.test(t)) {
+      actions.push({ type: 'WRITE', content: t, color: 'red', size: 'formula' });
+    } else if (/الخطوة|Step|خط|أولاً|ثانياً|ثالثاً/i.test(t)) {
+      actions.push({ type: 'WRITE', content: t, color: 'green' });
+    } else {
+      actions.push({ type: 'WRITE', content: t, color: 'black' });
+    }
+  });
+
+  return actions;
+}
+
+// ============================================
+// Image Search via Unsplash
+// ============================================
+
+async function searchImage(query) {
+  if (!process.env.UNSPLASH_ACCESS_KEY || process.env.UNSPLASH_ACCESS_KEY === 'your-unsplash-key') {
+    // fallback: استخدام Pollinations AI كصديل مجاني
+    return {
+      url: `https://image.pollinations.ai/prompt/${encodeURIComponent(query + ' educational diagram white background')}?width=400&height=300&nologo=true&seed=${Date.now()}`,
+      description: query,
+      attribution: 'AI Generated'
+    };
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=1&orientation=landscape`,
+      { headers: { Authorization: `Client-ID ${process.env.UNSPLASH_ACCESS_KEY}` } }
+    );
+    const data = await res.json();
+    if (data.results && data.results.length > 0) {
+      const img = data.results[0];
       return {
-        chatResponse: data.chat_explanation + (data.teacher_voice ? `\n\n_${data.teacher_voice}_` : ""),
-        whiteboardContent: JSON.stringify(data.board_actions) // نرسلها كـ JSON للـ Frontend ليترجمها لأوامر
+        url: img.urls.regular,
+        description: img.alt_description || query,
+        attribution: `Photo by ${img.user.name} on Unsplash`
       };
     }
   } catch (e) {
-    console.error("JSON Parsing failed, falling back to regex", e);
+    console.log('Unsplash failed, using Pollinations');
   }
 
-  // Fallback if AI fails to give JSON
-  const parts = aiFullResponse.split('---WHITEBOARD---');
   return {
-    chatResponse: parts[0].trim(),
-    whiteboardContent: parts[1] ? parts[1].trim() : ""
-  };
-}
-
-
-// ============================================
-// AI Router (with Fallback Chain)
-// ============================================
-
-async function getAIResponse(userMessage, educationType = 'arabic', gradeLevel = 'sec3', fileData = null) {
-  const providers = [
-    { name: 'Groq', fn: (msg, edu) => callGroqAPI(msg, edu, gradeLevel), enabled: !!process.env.GROQ_API_KEY },
-    { name: 'Gemini', fn: (msg, edu) => callGeminiAPI(msg, edu, gradeLevel, fileData), enabled: !!process.env.GEMINI_API_KEY },
-    { name: 'BlackBox', fn: (msg, edu) => callBlackBoxAPI(msg, edu, gradeLevel), enabled: !!process.env.BLACKBOX_API_KEY }
-  ];
-  
-  console.log('\n🤖 AI Provider Status:');
-  providers.forEach(p => {
-    console.log(`  ${p.enabled ? '✅' : '❌'} ${p.name}`);
-  });
-  
-  const enabledProviders = providers.filter(p => p.enabled);
-  
-  if (enabledProviders.length === 0) {
-    throw new Error('No AI providers configured! Please add API keys to .env file.');
-  }
-  
-  let lastError = null;
-  
-  for (const provider of enabledProviders) {
-    try {
-      console.log(`\n🔄 Attempting ${provider.name}...`);
-      const response = await provider.fn(userMessage, educationType);
-      
-      if (response && response.trim().length > 0) {
-        console.log(`✅ Success with ${provider.name}!\n`);
-        return response;
-      }
-    } catch (error) {
-      console.error(`❌ ${provider.name} failed:`, error.message);
-      lastError = error;
-      continue;
-    }
-  }
-  
-  // إذا فشلت كل المحاولات
-  throw new Error(`All AI providers failed. Last error: ${lastError?.message}`);
-}
-
-// ============================================
-// Parse Response (Chat + Whiteboard)
-// ============================================
-
-function parseAIResponse(fullResponse) {
-  const separator = '---WHITEBOARD---';
-  
-  if (fullResponse.includes(separator)) {
-    const [chatPart, whiteboardPart] = fullResponse.split(separator);
-    return {
-      chatResponse: chatPart.trim(),
-      whiteboardContent: whiteboardPart.trim()
-    };
-  }
-  
-  // إذا لم يكن مفصول، استخرج الأقسام للسبورة
-  const whiteboardSections = fullResponse.match(/##[^#]+/g) || [];
-  const whiteboardContent = whiteboardSections.join('\n\n').trim();
-  
-  return {
-    chatResponse: fullResponse,
-    whiteboardContent: whiteboardContent || 'لا يوجد محتوى للسبورة'
+    url: `https://image.pollinations.ai/prompt/${encodeURIComponent(query + ' educational diagram')}?width=400&height=300&nologo=true`,
+    description: query,
+    attribution: 'AI Generated'
   };
 }
 
 // ============================================
-// Authentication Middleware
+// Auth Middleware
 // ============================================
 
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  // للتطوير: السماح بالطلبات بدون token أو بكلمة null
+  const token = req.headers['authorization']?.split(' ')[1];
   if (!token || token === 'null' || token === 'undefined') {
-    req.user = { id: 'test-user', email: 'test@test.com' };
+    req.user = { id: 'guest', email: 'guest@saboora.ai' };
     return next();
   }
-
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      // للسماح بالتجربة حتى لو التوكن قديم
-      req.user = { id: 'test-user', email: 'test@test.com' };
-      return next();
-    }
-    req.user = user;
+    req.user = err ? { id: 'guest', email: 'guest@saboora.ai' } : user;
     next();
   });
 };
@@ -332,7 +345,10 @@ const authenticateToken = (req, res, next) => {
 // Routes
 // ============================================
 
-// Health Check
+app.get('/', (req, res) => {
+  res.json({ message: 'Saboora AI Backend is running! 🎓', port: PORT });
+});
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -340,248 +356,140 @@ app.get('/health', (req, res) => {
     env: {
       groq: !!process.env.GROQ_API_KEY,
       gemini: !!process.env.GEMINI_API_KEY,
-      blackbox: !!process.env.BLACKBOX_API_KEY,
+      unsplash: !!(process.env.UNSPLASH_ACCESS_KEY && process.env.UNSPLASH_ACCESS_KEY !== 'your-unsplash-key'),
       supabase: !!process.env.SUPABASE_URL
     }
   });
 });
 
-// Test AI Connection
-app.get('/api/test-ai', async (req, res) => {
-  try {
-    console.log('\n🧪 Testing AI Connection...\n');
-    
-    const testMessage = 'ما هو 2 + 2؟';
-    const response = await getAIResponse(testMessage, 'arabic');
-    
-    res.json({
-      success: true,
-      message: 'AI is working!',
-      testQuestion: testMessage,
-      response: response.substring(0, 200) + '...'
-    });
-    
-  } catch (error) {
-    console.error('❌ AI Test Failed:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      hint: 'Check your API keys in .env file'
-    });
-  }
-});
+// ============================================
+// Main Chat Endpoint
+// ============================================
 
-// Register
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { name, email, password, educationType = 'arabic' } = req.body;
-
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: 'All fields required' });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const { data, error } = await supabase
-      .from('users')
-      .insert([{
-        name,
-        email,
-        password_hash: hashedPassword,
-        education_type: educationType,
-        subscription_tier: 'free',
-        api_credits: 50
-      }])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Registration error:', error);
-      return res.status(400).json({ error: 'Email already exists or database error' });
-    }
-
-    const token = jwt.sign(
-      { id: data.id, email: data.email },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: data.id,
-        name: data.name,
-        email: data.email,
-        educationType: data.education_type
-      }
-    });
-
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Server error: ' + error.message });
-  }
-});
-
-// Login
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
-
-    if (error || !data) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const validPassword = await bcrypt.compare(password, data.password_hash);
-    
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign(
-      { id: data.id, email: data.email },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: data.id,
-        name: data.name,
-        email: data.email,
-        educationType: data.education_type
-      }
-    });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Server error: ' + error.message });
-  }
-});
-
-// Chat Endpoint (Main)
 app.post('/api/chat', authenticateToken, async (req, res) => {
   try {
-    console.log('\n📨 New Chat Request');
-    console.log('User:', req.user?.email || 'test user');
-    
-    const { message, educationType = 'arabic', gradeLevel = 'sec3', file = null } = req.body;
+    console.log('\n📨 New Chat Request from:', req.user?.email);
+
+    const {
+      message,
+      educationType = 'arabic',
+      gradeLevel = 'sec3',
+      file = null
+    } = req.body;
 
     if (!message || !message.trim()) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // استدعاء الـ AI مع الصف الدراسي والملف
-    const aiFullResponse = await getAIResponse(message, educationType, gradeLevel, file);
-    
-    // فصل الردين
-    const { chatResponse, whiteboardContent } = parseAIResponse(aiFullResponse);
+    // 1. استدعاء نظام الذكاء المزدوج
+    const { chatResponse, boardActions } = await getDualAIResponse(
+      message, educationType, gradeLevel, file
+    );
 
-    // 💾 حفظ المحادثة في قاعدة البيانات (Supabase)
-    // نستخدم email المستخدم إذا كان مسجلاً، وإلا نحفظه كـ guest
-    const userEmail = req.user?.email || 'guest_student';
-    
-    await supabase.from('messages').insert([
-      { 
-        user_email: userEmail, 
-        sender: 'user', 
-        content: message, 
-        grade_level: gradeLevel 
-      },
-      { 
-        user_email: userEmail, 
-        sender: 'assistant', 
-        content: chatResponse, 
-        whiteboard_content: whiteboardContent, 
-        grade_level: gradeLevel 
+    // 2. البحث عن صور توضيحية
+    let whiteboardImage = null;
+    const stickerAction = boardActions.find(a => a.type === 'STICKER');
+
+    if (stickerAction?.query) {
+      console.log('🖼️ Searching for image:', stickerAction.query);
+      whiteboardImage = await searchImage(stickerAction.query);
+    } else {
+      // توليد تلقائي لاستعلام الصورة
+      try {
+        let imgQuery = message.length < 50 ? message : message.substring(0, 50);
+        // تبسيط الاستعلام للإنجليزية
+        const queryMap = {
+          'مثلث': 'triangle geometry', 'دائرة': 'circle geometry', 'مربع': 'square geometry',
+          'ذرة': 'atom structure diagram', 'خلية': 'cell biology diagram',
+          'نيوتن': 'newton physics law', 'كيمياء': 'chemistry lab',
+          'فيزياء': 'physics diagram', 'رياضيات': 'mathematics'
+        };
+        for (const [ar, en] of Object.entries(queryMap)) {
+          if (message.includes(ar)) { imgQuery = en; break; }
+        }
+        if (/[\u0600-\u06FF]/.test(imgQuery)) {
+          imgQuery = 'educational diagram science'; // fallback عربي
+        }
+        whiteboardImage = await searchImage(imgQuery);
+      } catch (e) {
+        console.log('Image search failed:', e.message);
       }
-    ]);
+    }
 
-    console.log('✅ Response ready and saved to DB!');
+    // 3. حفظ في Supabase
+    const userEmail = req.user?.email || 'guest';
+    try {
+      await supabase.from('messages').insert([
+        { user_email: userEmail, sender: 'user', content: message, grade_level: gradeLevel },
+        { user_email: userEmail, sender: 'assistant', content: chatResponse, grade_level: gradeLevel }
+      ]);
+    } catch (dbErr) {
+      console.log('⚠️ DB save failed (non-critical):', dbErr.message);
+    }
 
+    console.log('✅ Dual response ready!');
 
     res.json({
       success: true,
       chatResponse,
-      whiteboardContent,
-      timestamp: new Date().toISOString()
+      whiteboardContent: JSON.stringify(boardActions),
+      whiteboardImage
     });
 
   } catch (error) {
-    console.error('\n❌ Chat Error:', error);
-    
+    console.error('❌ Chat Error:', error);
     res.status(500).json({
       success: false,
-      error: 'فشل في معالجة الرسالة',
-      details: error.message,
-      hint: 'تأكد من صحة API Keys في ملف .env'
+      error: error.message,
+      hint: 'Check API keys and server logs'
     });
   }
 });
 
-// 📥 استرجاع تاريخ المحادثة من Supabase
-app.get('/api/messages', authenticateToken, async (req, res) => {
+// ============================================
+// Auth Routes
+// ============================================
+
+app.post('/api/auth/register', async (req, res) => {
   try {
-    const userEmail = req.user?.email || 'guest_student';
-    
-    // سحب آخر 30 رسالة
+    const { name, email, password, educationType = 'arabic' } = req.body;
+    if (!name || !email || !password)
+      return res.status(400).json({ error: 'All fields required' });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
     const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('user_email', userEmail)
-      .order('created_at', { ascending: true })
-      .limit(30);
+      .from('users')
+      .insert([{ name, email, password_hash: hashedPassword, education_type: educationType }])
+      .select().single();
 
-    if (error) throw error;
+    if (error) return res.status(400).json({ error: 'Email already exists' });
 
-    res.json({
-      success: true,
-      messages: data.map(msg => ({
-        id: msg.id,
-        role: msg.sender,
-        content: msg.content,
-        whiteboardContent: msg.whiteboard_content,
-        timestamp: msg.created_at,
-        type: 'chat'
-      }))
-    });
-
-  } catch (error) {
-    console.error('Fetch messages error:', error);
-    res.status(500).json({ error: 'فشل في تحميل المحادثات السابقة' });
+    const token = jwt.sign({ id: data.id, email: data.email }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: data.id, name: data.name, email: data.email } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Dashboard Stats
-app.get('/api/dashboard/stats', authenticateToken, async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   try {
-    // إحصائيات افتراضية للتطوير
-    res.json({
-      totalQuestions: 0,
-      totalConversations: 0,
-      quizzesCompleted: 0,
-      averageScore: 0,
-      apiCredits: 50
-    });
-  } catch (error) {
-    console.error('Stats error:', error);
-    res.status(500).json({ error: 'Failed to fetch stats' });
+    const { email, password } = req.body;
+    const { data, error } = await supabase.from('users').select('*').eq('email', email).single();
+    if (error || !data) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const valid = await bcrypt.compare(password, data.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const token = jwt.sign({ id: data.id, email: data.email }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: data.id, name: data.name, email: data.email } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Error Handler
-app.use((err, req, res, next) => {
-  console.error('Unhandled Error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: err.message
-  });
+// 404 Handler
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found', path: req.path });
 });
 
 // ============================================
@@ -589,23 +497,20 @@ app.use((err, req, res, next) => {
 // ============================================
 
 app.listen(PORT, () => {
-  console.log('\n' + '='.repeat(50));
-  console.log('🚀 Saboora Backend Server Started!');
-  console.log('='.repeat(50));
+  console.log('\n==================================================');
+  console.log('🚀 Saboora Dual-AI Backend Started!');
+  console.log('==================================================');
   console.log(`📍 Port: ${PORT}`);
   console.log(`🌐 URL: http://localhost:${PORT}`);
   console.log('\n🔧 Configuration:');
-  console.log(`  ${process.env.GROQ_API_KEY ? '✅' : '❌'} Groq API`);
-  console.log(`  ${process.env.GEMINI_API_KEY ? '✅' : '❌'} Gemini API`);
-  console.log(`  ${process.env.BLACKBOX_API_KEY ? '✅' : '❌'} BlackBox API`);
+  console.log(`  ${process.env.GROQ_API_KEY ? '✅' : '❌'} Groq API (Chat + Board)`);
+  console.log(`  ${process.env.GEMINI_API_KEY ? '✅' : '❌'} Gemini API (Fallback)`);
+  console.log(`  ${process.env.UNSPLASH_ACCESS_KEY && process.env.UNSPLASH_ACCESS_KEY !== 'your-unsplash-key' ? '✅' : '⚡'} Unsplash (${process.env.UNSPLASH_ACCESS_KEY ? 'configured' : 'using Pollinations fallback'})`);
   console.log(`  ${process.env.SUPABASE_URL ? '✅' : '❌'} Supabase`);
   console.log('\n📝 Endpoints:');
-  console.log('  GET  /health           - Health check');
-  console.log('  GET  /api/test-ai      - Test AI connection');
-  console.log('  POST /api/auth/register - Register user');
-  console.log('  POST /api/auth/login    - Login');
-  console.log('  POST /api/chat          - Send message');
-  console.log('='.repeat(50) + '\n');
+  console.log('  GET  /health       - Health check');
+  console.log('  POST /api/chat     - Dual AI chat + board');
+  console.log('  POST /api/auth/register');
+  console.log('  POST /api/auth/login');
+  console.log('==================================================\n');
 });
-
-module.exports = app;
