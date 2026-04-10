@@ -14,12 +14,12 @@ app.use(express.json({ limit: '50mb' }));
 
 // Database Connection (Supabase)
 const supabase = createClient(
-  process.env.postgresql: //postgres:[saboora01124044320]@db.cjgmytfphahbphmogbye.supabase.co:5432/postgres,
-  process.env.sb_publishable_XJuIAk4OFtc_mEQYtb486w_2UwnrMMW
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
 );
 
 // JWT Secret
-const JWT_SECRET = process.env.JWT_SECRET || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqZ215dGZwaGFoYnBobW9nYnllIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU5MDQ2NSwiZXhwIjoyMDkxMTY2NDY1fQ.8zppLdiezlUlrO3wMEdJA3tSMVQEj9vmLOGkNDsKquA';
+const JWT_SECRET = process.env.JWT_SECRET || 'saboora-secret-key';
 
 // ============================================
 // AI Integration
@@ -89,7 +89,7 @@ Use different sections:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.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}`
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
       },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
@@ -123,7 +123,7 @@ const callGeminiAPI = async (messages, educationType) => {
       : 'You are a specialized tutor. Reply in detail in English.';
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.AIzaSyDYGxMBVm_omTBiEf6r0Zidh - t1dFg5beU}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
