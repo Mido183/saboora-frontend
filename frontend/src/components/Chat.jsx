@@ -22,7 +22,7 @@ const Chat = ({ onAIResponse, educationType = 'arabic', gradeLevel = 'sec3', stu
       content: welcomeMsg,
       timestamp: new Date().toISOString()
     }]);
-  }, []);
+  }, [isArabic, studentName]);
 
   // التمرير التلقائي
   useEffect(() => {
@@ -91,7 +91,7 @@ const Chat = ({ onAIResponse, educationType = 'arabic', gradeLevel = 'sec3', stu
           file: currentFile,
           educationType,
           gradeLevel,
-          conversationHistory: messages.slice(-5).map(m => ({ role: m.role, content: parseChatResponse(m.content) }))
+          conversationHistory: messages.slice(-20).map(m => ({ role: m.role, content: parseChatResponse(m.content) }))
         })
       });
 
@@ -145,12 +145,23 @@ const Chat = ({ onAIResponse, educationType = 'arabic', gradeLevel = 'sec3', stu
     }
   };
 
-  // تنسيق النص (Bold وسطور جديدة)
-  const formatMessage = (text) => {
+  // تنسيق النص (هروب HTML، Bold، روابط، وسطور جديدة)
+  const formatMessage = (text, role = 'assistant') => {
     if (!text) return '';
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n/g, '<br/>');
+    let s = String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    s = s.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    const linkStyle =
+      role === 'user'
+        ? 'color:#e0e7ff;text-decoration:underline;word-break:break-all;'
+        : 'color:#2563eb;text-decoration:underline;word-break:break-all;';
+    s = s.replace(
+      /(https?:\/\/[^\s<>"']+)/g,
+      `<a href="$1" target="_blank" rel="noopener noreferrer" style="${linkStyle}">$1</a>`
+    );
+    return s.replace(/\n/g, '<br/>');
   };
 
   return (
@@ -196,7 +207,7 @@ const Chat = ({ onAIResponse, educationType = 'arabic', gradeLevel = 'sec3', stu
                     {m.file.type?.includes('image') ? '🖼️' : '📄'} {m.file.name}
                   </div>
                 )}
-                <div dangerouslySetInnerHTML={{ __html: formatMessage(m.content) }} />
+                <div dangerouslySetInnerHTML={{ __html: formatMessage(m.content, m.role) }} />
                 <div style={{ fontSize: '10px', opacity: 0.5, marginTop: '6px', textAlign: isArabic ? 'left' : 'right' }}>
                   {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>

@@ -27,7 +27,7 @@ const playPenSound = () => {
     g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
     o.connect(g); g.connect(ctx.destination);
     o.start(); o.stop(ctx.currentTime + 0.05);
-  } catch (_) {}
+  } catch (_) { }
 };
 
 // ============================================
@@ -59,9 +59,9 @@ const AnimatedLine = ({ text, color = COLORS.black, size = 'normal', delay = 0, 
   }, [text, delay]);
 
   const styles = {
-    title: { fontSize: '22px', fontWeight: '800', borderBottom: `2px solid ${color}44`, paddingBottom: '6px', marginBottom: '10px' },
-    formula: { fontSize: '20px', fontWeight: '700', letterSpacing: '1px', fontFamily: "'Courier New', monospace" },
-    normal: { fontSize: '16px', fontWeight: '500' },
+    title: { fontSize: '30px', fontWeight: '800', borderBottom: `2px solid ${color}44`, paddingBottom: '6px', marginBottom: '10px' },
+    formula: { fontSize: '28px', fontWeight: '700', letterSpacing: '1px', fontFamily: "'Courier New', monospace" },
+    normal: { fontSize: '24px', fontWeight: '500' },
   };
 
   return (
@@ -186,7 +186,7 @@ const parseActions = (whiteboardContent) => {
   try {
     const parsed = JSON.parse(whiteboardContent);
     if (Array.isArray(parsed)) return parsed;
-  } catch (_) {}
+  } catch (_) { }
 
   // نص عادي → أوامر تلقائية
   const lines = whiteboardContent.split('\n').filter(l => l.trim());
@@ -213,9 +213,9 @@ const Whiteboard = ({ aiContent, isWriting, whiteboardImage, educationType = 'ar
   const [writingProgress, setWritingProgress] = useState(0);
   const [totalLines, setTotalLines] = useState(0);
   const [doneLines, setDoneLines] = useState(0);
+  const [imageLoadError, setImageLoadError] = useState(false);
   const boardRef = useRef(null);
   const isArabic = educationType === 'arabic';
-
   // استقبال محتوى جديد من AI
   useEffect(() => {
     if (!aiContent) return;
@@ -237,6 +237,10 @@ const Whiteboard = ({ aiContent, isWriting, whiteboardImage, educationType = 'ar
       return newSlides;
     });
   }, [aiContent]);
+
+  useEffect(() => {
+    setImageLoadError(false);
+  }, [whiteboardImage?.url, aiContent]);
 
   // تحديث شريط التقدم
   const handleLineDone = useCallback(() => {
@@ -272,6 +276,9 @@ const Whiteboard = ({ aiContent, isWriting, whiteboardImage, educationType = 'ar
     description: stickerAction.caption || '',
     attribution: 'AI Generated'
   } : null);
+
+  const showImagePanel =
+    displayImage && (whiteboardImage || currentActions.length > 0);
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#fefce8', borderRadius: '12px', overflow: 'hidden', fontFamily: "'Cairo', sans-serif" }}>
@@ -380,8 +387,8 @@ const Whiteboard = ({ aiContent, isWriting, whiteboardImage, educationType = 'ar
         {/* كانفاس الرسم */}
         <DrawingCanvas isActive={drawMode} color={markerColor} isEraser={eraserMode} />
 
-        {/* الصورة التوضيحية (أعلى اليمين) */}
-        {displayImage && currentActions.length > 0 && (
+        {/* الصورة التوضيحية (أعلى اليسار في RTL) — تظهر مع رد API حتى قبل اكتمال النص */}
+        {showImagePanel && (
           <motion.div
             initial={{ opacity: 0, scale: 0.8, x: 20 }}
             animate={{ opacity: 1, scale: 1, x: 0 }}
@@ -396,12 +403,33 @@ const Whiteboard = ({ aiContent, isWriting, whiteboardImage, educationType = 'ar
               overflow: 'hidden',
             }}
           >
-            <img
-              src={displayImage.url}
-              alt={displayImage.description}
-              style={{ width: '100%', height: '130px', objectFit: 'cover', display: 'block' }}
-              onError={(e) => { e.target.style.display = 'none'; }}
-            />
+            {!imageLoadError ? (
+              <img
+                src={displayImage.url}
+                alt={displayImage.description || ''}
+                style={{ width: '100%', height: '130px', objectFit: 'cover', display: 'block' }}
+                onError={() => setImageLoadError(true)}
+              />
+            ) : (
+              <div
+                style={{
+                  width: '100%',
+                  height: '130px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#fef3c7',
+                  color: '#78350f',
+                  fontSize: '12px',
+                  fontFamily: 'Cairo',
+                  textAlign: 'center',
+                  padding: '8px',
+                  boxSizing: 'border-box',
+                }}
+              >
+                {isArabic ? 'تعذر تحميل الصورة. تحقق من الاتصال أو جرّب سؤالاً آخر.' : 'Image failed to load.'}
+              </div>
+            )}
             <div style={{ padding: '6px 8px', background: '#fef3c7' }}>
               <div style={{ fontSize: '11px', color: '#78350f', fontWeight: '700', textAlign: 'center', fontFamily: 'Cairo' }}>
                 🖼️ صورة توضيحية
@@ -418,7 +446,7 @@ const Whiteboard = ({ aiContent, isWriting, whiteboardImage, educationType = 'ar
         {/* محتوى الشرح */}
         <div style={{
           position: 'relative', zIndex: drawMode ? 0 : 5,
-          padding: '20px 24px 20px', paddingLeft: displayImage ? '220px' : '24px',
+          padding: '20px 24px 20px', paddingLeft: showImagePanel ? '220px' : '24px',
           height: '100%', overflowY: 'auto', direction: 'rtl',
         }}>
           <AnimatePresence mode="wait">

@@ -89,7 +89,7 @@ function createWhiteboardSystemPrompt(educationType, gradeLevel) {
 - red: الإجابات والنتائج والمعادلات
 - green: الخطوات والملاحظات
 
-قاعدة STICKER: أضف صورة واحدة فقط إذا كان الموضوع مرئياً (رياضيات/علوم/فيزياء). query يكون بالإنجليزية فقط.
+قاعدة STICKER: أضف دائماً عنصر STICKER واحداً باستعلام بحث بالإنجليزية (3–6 كلمات) يصف مخططاً أو شكلاً توضيحياً مناسباً للموضوع — حتى في اللغة والتاريخ استخدم رمزاً أو خريطة مفهومية إن أمكن. query بالإنجليزية فقط.
 
 لا تزيد board_actions عن 6 عناصر. لا تكتب أي نص خارج الـ JSON.`;
 }
@@ -105,6 +105,148 @@ function generateImageQuery(userMessage) {
 - "قانون نيوتن" → "newton law physics"
 
 اكتب كلمات البحث فقط، بدون أي نص آخر.`;
+}
+
+// ============================================
+// Conversation history (sanitize for LLM APIs)
+// ============================================
+
+const MAX_HISTORY_MESSAGES = 20;
+const MAX_MESSAGE_CHARS = 8000;
+
+function sanitizeConversationHistory(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const m of raw) {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
+    const c = String(m.content || '').trim().slice(0, MAX_MESSAGE_CHARS);
+    if (!c) continue;
+    out.push({ role: m.role, content: c });
+  }
+  const trimmed = out.slice(-MAX_HISTORY_MESSAGES);
+  while (trimmed.length && trimmed[0].role === 'assistant') trimmed.shift();
+  return trimmed;
+}
+
+function buildGroqChatMessages(systemPrompt, history, userContent) {
+  return [
+    { role: 'system', content: systemPrompt },
+    ...history.map((h) => ({ role: h.role, content: h.content })),
+    { role: 'user', content: userContent }
+  ];
+}
+
+function buildBoardUserMessage(message, history) {
+  const recent = history.slice(-4);
+  if (recent.length === 0) return message;
+  const ctx = recent
+    .map((h) => `${h.role === 'user' ? 'طالب' : 'معلم'}: ${h.content}`)
+    .join('\n');
+  return `سياق المحادثة السابق:\n${ctx}\n\nالسؤال أو الطلب الحالي:\n${message}`;
+}
+
+// ============================================
+// Link enrichment (SSRF-safe allowlist)
+// ============================================
+
+const URL_IN_MESSAGE_REGEX = /https?:\/\/[^\s\[\]<>()"']+/gi;
+
+function linkHostAllowed(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  if (h === 'youtu.be') return true;
+  if (h === 'youtube.com' || h.endsWith('.youtube.com')) return true;
+  if (h.endsWith('.wikipedia.org')) return true;
+  return false;
+}
+
+async function fetchYouTubeOEmbedContext(url) {
+  const oembed = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`;
+  const res = await fetch(oembed, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) return null;
+  const j = await res.json();
+  const parts = [`فيديو يوتيوب: ${j.title || ''}`.trim()];
+  if (j.author_name) parts.push(`القناة: ${j.author_name}`);
+  return parts.join(' — ');
+}
+
+async function fetchWikipediaSummaryContext(urlObj) {
+  const host = urlObj.hostname.toLowerCase();
+  if (!host.endsWith('wikipedia.org')) return null;
+  const pathParts = urlObj.pathname.split('/').filter(Boolean);
+  if (pathParts[0] !== 'wiki' || !pathParts[1]) return null;
+  const title = decodeURIComponent(pathParts.slice(1).join('/'));
+  const lang = host.split('.')[0] || 'en';
+  const apiUrl = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`;
+  const res = await fetch(apiUrl, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!res.ok) return null;
+  const j = await res.json();
+  if (j.extract) return `ويكيبيديا (${title}): ${j.extract}`;
+  if (j.title) return `ويكيبيديا: ${j.title}`;
+  return null;
+}
+
+async function enrichMessageWithLinks(message) {
+  const matches = message.match(URL_IN_MESSAGE_REGEX);
+  if (!matches || !matches.length) return message;
+  const unique = [...new Set(matches.map((u) => u.replace(/[.,;:!?)]+$/, '')))].slice(0, 4);
+  const blocks = [];
+  for (const urlStr of unique) {
+    try {
+      const u = new URL(urlStr);
+      if (!['http:', 'https:'].includes(u.protocol)) continue;
+      if (!linkHostAllowed(u.hostname)) continue;
+      let ctx = null;
+      if (u.hostname === 'youtu.be' || u.hostname.includes('youtube.com')) {
+        ctx = await fetchYouTubeOEmbedContext(urlStr);
+      } else if (u.hostname.endsWith('wikipedia.org')) {
+        ctx = await fetchWikipediaSummaryContext(u);
+      }
+      if (ctx) blocks.push(ctx);
+    } catch (_) {
+      /* invalid URL */
+    }
+  }
+  if (!blocks.length) return message;
+  return `${message}\n\n[معلومات مأخوذة من روابط آمنة في رسالتك]\n${blocks.join('\n\n')}`;
+}
+
+// ============================================
+// Vision: describe image via Gemini (for Groq chat path)
+// ============================================
+
+async function describeImageWithGemini(fileData) {
+  if (!fileData?.data || !process.env.GEMINI_API_KEY) return null;
+  const base64Content = fileData.data.includes(',') ? fileData.data.split(',')[1] : fileData.data;
+  const mime = fileData.type || 'image/jpeg';
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: 'صف محتوى هذه الصورة بالعربية بإيجاز (للمعلم الذي يشرح للطالب). ركز على النصوص والأشكال والعناصر التعليمية. بدون تنسيق markdown.'
+              },
+              { inline_data: { mime_type: mime, data: base64Content } }
+            ]
+          }
+        ]
+      })
+    }
+  );
+  if (!response.ok) {
+    const err = await response.text();
+    console.log('⚠️ describeImageWithGemini failed:', err.slice(0, 200));
+    return null;
+  }
+  const data = await response.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
 }
 
 // ============================================
@@ -136,28 +278,36 @@ async function callGroqWithPrompt(messages, maxTokens = 2000) {
 }
 
 // ============================================
-// AI Provider: Gemini (Fallback)
+// AI Provider: Gemini (Fallback + multimodal history)
 // ============================================
 
-async function callGeminiWithPrompt(systemPrompt, userMessage, fileData = null) {
-  const parts = [{ text: `${systemPrompt}\n\nالسؤال: ${userMessage}` }];
-
+async function callGeminiWithHistory(systemPrompt, history, userMessage, fileData = null) {
+  const contents = [];
+  for (const h of history) {
+    const role = h.role === 'assistant' ? 'model' : 'user';
+    contents.push({ role, parts: [{ text: h.content }] });
+  }
+  const userParts = [{ text: userMessage }];
   if (fileData && fileData.data) {
     const base64Content = fileData.data.split(',')[1];
-    parts.push({
+    userParts.push({
       inline_data: {
-        mime_type: fileData.type || "image/jpeg",
+        mime_type: fileData.type || 'image/jpeg',
         data: base64Content
       }
     });
   }
+  contents.push({ role: 'user', parts: userParts });
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts }] })
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents
+      })
     }
   );
 
@@ -174,9 +324,21 @@ async function callGeminiWithPrompt(systemPrompt, userMessage, fileData = null) 
 // Dual AI Call (Chat + Whiteboard) in Parallel
 // ============================================
 
-async function getDualAIResponse(userMessage, educationType, gradeLevel, fileData = null) {
+async function getDualAIResponse(
+  userMessage,
+  educationType,
+  gradeLevel,
+  fileData = null,
+  conversationHistory = []
+) {
+  const history = sanitizeConversationHistory(conversationHistory);
   const chatPrompt = createChatSystemPrompt(educationType, gradeLevel);
   const boardPrompt = createWhiteboardSystemPrompt(educationType, gradeLevel);
+  const boardUserMsg = buildBoardUserMessage(userMessage, history);
+
+  const chatUserContent = fileData
+    ? `${userMessage}\n[الطالب أرفق ملفاً: ${fileData.name || 'مرفق'} — النوع: ${fileData.type || 'غير معروف'}]`
+    : userMessage;
 
   console.log('🤖 Starting dual AI calls in parallel...');
 
@@ -185,12 +347,10 @@ async function getDualAIResponse(userMessage, educationType, gradeLevel, fileDat
     // Chat AI
     (async () => {
       if (process.env.GROQ_API_KEY) {
-        return await callGroqWithPrompt([
-          { role: 'system', content: chatPrompt },
-          { role: 'user', content: fileData ? `${userMessage}\n[الطالب أرفق صورة/ملف]` : userMessage }
-        ], 2000);
+        const messages = buildGroqChatMessages(chatPrompt, history, chatUserContent);
+        return await callGroqWithPrompt(messages, 2000);
       } else if (process.env.GEMINI_API_KEY) {
-        return await callGeminiWithPrompt(chatPrompt, userMessage, fileData);
+        return await callGeminiWithHistory(chatPrompt, history, userMessage, fileData);
       }
       throw new Error('No chat AI provider');
     })(),
@@ -198,12 +358,15 @@ async function getDualAIResponse(userMessage, educationType, gradeLevel, fileDat
     // Whiteboard AI (أسرع - رد مختصر)
     (async () => {
       if (process.env.GROQ_API_KEY) {
-        return await callGroqWithPrompt([
-          { role: 'system', content: boardPrompt },
-          { role: 'user', content: userMessage }
-        ], 600);
+        return await callGroqWithPrompt(
+          [
+            { role: 'system', content: boardPrompt },
+            { role: 'user', content: boardUserMsg }
+          ],
+          600
+        );
       } else if (process.env.GEMINI_API_KEY) {
-        return await callGeminiWithPrompt(boardPrompt, userMessage);
+        return await callGeminiWithHistory(boardPrompt, history, boardUserMsg, null);
       }
       throw new Error('No board AI provider');
     })()
@@ -270,7 +433,7 @@ function autoGenerateBoardActions(text, userMessage) {
   actions.push({ type: 'WRITE', content: `📌 ${topic}`, color: 'blue', importance: 'high' });
 
   // استخراج أهم 4 أسطر
-  lines.slice(0, 5).forEach(line => {
+  lines.slice(0, 4).forEach(line => {
     const t = line.replace(/^[#*\-•\d.]\s*/, '').trim();
     if (!t || t.length < 3) return;
 
@@ -282,6 +445,13 @@ function autoGenerateBoardActions(text, userMessage) {
       actions.push({ type: 'WRITE', content: t, color: 'black' });
     }
   });
+
+  if (actions.length < 6) {
+    const q = /[\u0600-\u06FF]/.test(userMessage)
+      ? 'educational science concept diagram'
+      : `${(userMessage.slice(0, 36).trim() || 'topic')} educational diagram`.replace(/\s+/g, ' ');
+    actions.push({ type: 'STICKER', query: q, caption: 'توضيح بصري' });
+  }
 
   return actions;
 }
@@ -374,16 +544,60 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
       message,
       educationType = 'arabic',
       gradeLevel = 'sec3',
-      file = null
+      file = null,
+      conversationHistory = null
     } = req.body;
 
     if (!message || !message.trim()) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // 1. استدعاء نظام الذكاء المزدوج
+    const history = sanitizeConversationHistory(conversationHistory);
+
+    let augmentedMessage = message.trim();
+    try {
+      augmentedMessage = await enrichMessageWithLinks(augmentedMessage);
+    } catch (linkErr) {
+      console.log('⚠️ Link enrichment skipped:', linkErr.message);
+    }
+
+    let fileForModel = file;
+    const isImage =
+      file &&
+      file.type &&
+      String(file.type).toLowerCase().startsWith('image/');
+    const isPdf =
+      file &&
+      file.type &&
+      String(file.type).toLowerCase() === 'application/pdf';
+
+    if (isPdf) {
+      augmentedMessage += `\n\n[ملف PDF مرفق (${file.name || 'document.pdf'}): التحليل التلقائي لملفات PDF غير مفعّل حالياً؛ انسخ النص أو أرسل صورة للصفحة.]`;
+      fileForModel = null;
+    } else if (isImage && process.env.GROQ_API_KEY) {
+      if (process.env.GEMINI_API_KEY) {
+        const desc = await describeImageWithGemini(file);
+        if (desc) {
+          augmentedMessage += `\n\n[وصف الصورة المرفقة]\n${desc}`;
+        } else {
+          augmentedMessage +=
+            '\n\n[تعذر تحليل الصورة تلقائياً — تحقق من مفتاح Gemini أو جودة الملف.]';
+        }
+        fileForModel = null;
+      } else {
+        augmentedMessage +=
+          '\n\n[تنبيه: لتحليل الصور مع Groq يلزم ضبط GEMINI_API_KEY على الخادم لاستخراج وصف الصورة.]';
+        fileForModel = null;
+      }
+    }
+
+    // 1. استدعاء نظام الذكاء المزدوج (مع سياق المحادثة)
     const { chatResponse, boardActions } = await getDualAIResponse(
-      message, educationType, gradeLevel, file
+      augmentedMessage,
+      educationType,
+      gradeLevel,
+      fileForModel,
+      history
     );
 
     // 2. البحث عن صور توضيحية
@@ -396,7 +610,8 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
     } else {
       // توليد تلقائي لاستعلام الصورة
       try {
-        let imgQuery = message.length < 50 ? message : message.substring(0, 50);
+        let imgQuery =
+          augmentedMessage.length < 50 ? augmentedMessage : augmentedMessage.substring(0, 50);
         // تبسيط الاستعلام للإنجليزية
         const queryMap = {
           'مثلث': 'triangle geometry', 'دائرة': 'circle geometry', 'مربع': 'square geometry',
@@ -405,7 +620,7 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
           'فيزياء': 'physics diagram', 'رياضيات': 'mathematics'
         };
         for (const [ar, en] of Object.entries(queryMap)) {
-          if (message.includes(ar)) { imgQuery = en; break; }
+          if (augmentedMessage.includes(ar)) { imgQuery = en; break; }
         }
         if (/[\u0600-\u06FF]/.test(imgQuery)) {
           imgQuery = 'educational diagram science'; // fallback عربي
